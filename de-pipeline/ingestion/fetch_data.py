@@ -36,21 +36,47 @@ class TokenManager:
         return self._access_token
 
     def _refresh(self):
-        response = requests.post(
-            config.OPENSKY_TOKEN_URL,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-            },
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        self._access_token = payload["access_token"]
-        # Tokens are valid for 30 minutes; refresh a little early to avoid edge-of-expiry 401s.
-        self._expires_at = time.monotonic() + min(payload.get("expires_in", 1800), 1800) - 60
-        logger.debug("Refreshed OpenSky OAuth2 token")
+        last_exc = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = requests.post(
+                    config.OPENSKY_TOKEN_URL,
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self._client_id,
+                        "client_secret": self._client_secret,
+                    },
+                    timeout=REQUEST_TIMEOUT_SECONDS,
+                )
+            except requests.RequestException as exc:
+                last_exc = exc
+                logger.warning("Token request error (attempt %s/%s): %s", attempt, MAX_RETRIES, exc)
+                time.sleep(RETRY_BACKOFF_SECONDS)
+                continue
+
+            if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
+                wait_seconds = int(response.headers.get("Retry-After", RETRY_BACKOFF_SECONDS))
+                logger.warning(
+                    "HTTP %s on token endpoint, retrying in %ss (attempt %s/%s)",
+                    response.status_code,
+                    wait_seconds,
+                    attempt,
+                    MAX_RETRIES,
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            response.raise_for_status()
+            payload = response.json()
+            self._access_token = payload["access_token"]
+            # refresh a bit early to avoid edge-of-expiry 401s
+            self._expires_at = time.monotonic() + min(payload.get("expires_in", 1800), 1800) - 60
+            logger.debug("Refreshed OpenSky OAuth2 token")
+            return
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Exhausted retries refreshing OpenSky OAuth2 token")
 
 
 def _start_of_utc_day(ts):
