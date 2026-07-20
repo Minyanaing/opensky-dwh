@@ -161,7 +161,22 @@ Because callsigns/airports are append-only-if-new, most runs process a small "wh
 | `ADMIN_PRINCIPAL` | `infra-deploy.yml` (optional — see Section 1d) |
 | `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET` | `de-ingest.yml` |
 
-`de-ingest.yml` isn't on any schedule yet — GitHub's built-in `schedule:` is deliberately not used (only fires from the default branch, delayed/dropped under load); wiring up an external cron (e.g. cron-job.org) to hit its `repository_dispatch` endpoint is a manual step outside this repo.
+### Scheduling `de-ingest.yml` via cron-job.org
+
+GitHub's built-in `schedule:` is deliberately not used (only fires from the default branch, delayed/dropped under load). Instead, `de-ingest.yml` listens for a `repository_dispatch` event — point an external scheduler at it:
+
+1. **Create a GitHub PAT** (classic, scope: `repo`) — a fine-grained token also works, "Contents: Read and write" permission on this repo.
+2. **In cron-job.org, create a job** with:
+   - URL: `https://api.github.com/repos/<owner>/<repo>/dispatches`
+   - Method: `POST`
+   - Headers: `Authorization: Bearer <your-PAT>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`
+   - Body: `{"event_type": "de-ingest"}`
+   - Schedule: whatever cadence you want (daily is enough given the credit math in the plan)
+3. **Test it manually first** — cron-job.org lets you trigger a job on demand; confirm a run shows up under the repo's **Actions** tab before trusting the schedule.
+
+The PAT lives only in cron-job.org's job config — never store it as a repo secret, since it has push-level (`repo` scope) access to this repository.
+
+You can also trigger a run yourself any time without cron-job.org at all: **Actions → OpenSky ingest + land in Databricks → Run workflow** (the `workflow_dispatch` path, with an optional `lookback_days` override).
 
 ## Notes
 
