@@ -1,3 +1,15 @@
+# NOT CURRENTLY WORKING FROM GITHUB-HOSTED RUNNERS.
+#
+# auth.opensky-network.org (and opensky-network.org itself - same origin IP, 194.209.200.34,
+# no CDN) times out at the raw TCP level from every ubuntu-latest run we've tried: DNS resolves
+# fine, but the connection just hangs and never completes. Forcing IPv4-only resolution
+# (fetch_data.py) didn't help either, ruling out a broken-IPv6-route explanation. That pattern -
+# consistent failure, silent hang rather than a fast reject, works fine from a normal residential
+# connection - points to OpenSky's origin (or something upstream of it) blocking/dropping traffic
+# from GitHub Actions' known Azure datacenter IP ranges.
+#
+# Kept here, not deleted, in case that changes (self-hosted runner, OpenSky allowlisting, etc.).
+# For now, run ingestion locally on a schedule instead - see de-pipeline/README.md.
 name: OpenSky ingest + land in Databricks
 
 on:

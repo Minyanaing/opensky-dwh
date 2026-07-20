@@ -149,7 +149,7 @@ Because callsigns/airports are append-only-if-new, most runs process a small "wh
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `infra-deploy.yml` | push to `main` touching `de-pipeline/databricks/**`, or manual dispatch | Runs `databricks_setup.py` — see Section 1e to test it |
-| `de-ingest.yml` | manual dispatch (`lookback_days` input), or `repository_dispatch` type `de-ingest` | Runs `ingest_opensky.py` with `INGEST_MODE=databricks` — fetches and lands in one step, no separate load step |
+| `de-ingest.yml` | manual dispatch (`lookback_days` input), or `repository_dispatch` type `de-ingest` | **Currently can't succeed** — OpenSky's origin appears to block GitHub-hosted runner IPs (see the workflow file's header comment). Kept in the repo for later (self-hosted runner, etc.); run ingestion locally for now — Section 6 |
 
 **Secrets needed** (repo → Settings → Secrets and variables → Actions):
 
@@ -161,22 +161,23 @@ Because callsigns/airports are append-only-if-new, most runs process a small "wh
 | `ADMIN_PRINCIPAL` | `infra-deploy.yml` (optional — see Section 1d) |
 | `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET` | `de-ingest.yml` |
 
-### Scheduling `de-ingest.yml` via cron-job.org
+## 6. Running ingestion daily (local, since GitHub Actions can't reach OpenSky)
 
-GitHub's built-in `schedule:` is deliberately not used (only fires from the default branch, delayed/dropped under load). Instead, `de-ingest.yml` listens for a `repository_dispatch` event — point an external scheduler at it:
+`de-ingest.yml` is kept in the repo but currently can't succeed on GitHub-hosted runners: OpenSky's origin server (`auth.opensky-network.org` and `opensky-network.org` both resolve to the same non-CDN IP) times out at the raw TCP level on every `ubuntu-latest` run, while working fine locally — the signature of the origin blocking/dropping traffic from GitHub Actions' known IP ranges, not a code bug (see the workflow file's header comment for the full diagnosis). Databricks Free Edition compute can't reach OpenSky either (its own outbound-network policy), so daily ingestion has to run from a machine you control, for now.
 
-1. **Create a GitHub PAT** (classic, scope: `repo`) — a fine-grained token also works, "Contents: Read and write" permission on this repo.
-2. **In cron-job.org, create a job** with:
-   - URL: `https://api.github.com/repos/<owner>/<repo>/dispatches`
-   - Method: `POST`
-   - Headers: `Authorization: Bearer <your-PAT>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`
-   - Body: `{"event_type": "de-ingest"}`
-   - Schedule: whatever cadence you want (daily is enough given the credit math in the plan)
-3. **Test it manually first** — cron-job.org lets you trigger a job on demand; confirm a run shows up under the repo's **Actions** tab before trusting the schedule.
+**`run_daily.bat`** (in `de-pipeline/ingestion/`) does this: activates the local venv, sets `INGEST_MODE=databricks`, runs `ingest_opensky.py`, and appends output to `ingest_daily.log` (gitignored).
 
-The PAT lives only in cron-job.org's job config — never store it as a repo secret, since it has push-level (`repo` scope) access to this repository.
+**Windows Task Scheduler setup:**
 
-You can also trigger a run yourself any time without cron-job.org at all: **Actions → OpenSky ingest + land in Databricks → Run workflow** (the `workflow_dispatch` path, with an optional `lookback_days` override).
+1. Complete Section 2/3 first — `.venv` created, `.env` filled in with OpenSky *and* Databricks credentials (`INGEST_MODE=databricks` needs both).
+2. Open **Task Scheduler → Create Basic Task**:
+   - Trigger: **Daily**, pick a time.
+   - Action: **Start a program** → Program/script: the full path to `run_daily.bat` (e.g. `C:\...\de-pipeline\ingestion\run_daily.bat`). Leave "Start in" blank — the script sets its own working directory via `%~dp0`.
+3. Right-click the task → **Run** to test it once immediately, then check `ingest_daily.log` for the same success output you'd see running it by hand.
+
+Ingestion is stateless (no watermark) and idempotent, so a missed day (machine off, asleep, etc.) is harmless — the next successful run's trailing window covers it.
+
+If this ever becomes viable on GitHub Actions again (a self-hosted runner, OpenSky allowlisting your account, etc.), `de-ingest.yml` is already fully wired — just point cron-job.org or a schedule at it the same way `infra-deploy.yml` is triggered.
 
 ## Notes
 
