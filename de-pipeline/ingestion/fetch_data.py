@@ -1,12 +1,19 @@
 """OpenSky Network API access: OAuth2 client-credentials token management and flight fetches."""
 
 import logging
+import socket
 import time
 from datetime import datetime, timezone
 
 import requests
+import urllib3.util.connection as urllib3_connection
 
 import config
+
+# GitHub-hosted runners have documented broken/unreachable IPv6 routes to some hosts, with no
+# fallback to IPv4 - causing a full connect-timeout hang instead of a fast failover. Forcing
+# IPv4-only DNS resolution sidesteps it; harmless when IPv6 isn't the issue.
+urllib3_connection.allowed_gai_family = lambda: socket.AF_INET
 
 logger = logging.getLogger(__name__)
 
