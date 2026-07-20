@@ -76,8 +76,26 @@ def _statements(sql_text):
     return [statement.strip() for statement in code_only.split(";") if statement.strip()]
 
 
+def _apply_admin_principal(statements):
+    """Substitute {{ADMIN_PRINCIPAL}} from the env var of the same name, or drop any statement
+    that references it if the env var isn't set - it's an optional grant, not a required one."""
+    admin_principal = os.environ.get("ADMIN_PRINCIPAL", "").strip()
+    if admin_principal:
+        return [s.replace("{{ADMIN_PRINCIPAL}}", f"`{admin_principal}`") for s in statements]
+
+    kept, skipped = [], 0
+    for statement in statements:
+        if "{{ADMIN_PRINCIPAL}}" in statement:
+            skipped += 1
+        else:
+            kept.append(statement)
+    if skipped:
+        logger.info("ADMIN_PRINCIPAL not set - skipping %s statement(s) that reference it", skipped)
+    return kept
+
+
 def run(sql_file=SQL_FILE):
-    statements = _statements(sql_file.read_text(encoding="utf-8"))
+    statements = _apply_admin_principal(_statements(sql_file.read_text(encoding="utf-8")))
     logger.info("Applying %s statement(s) from %s", len(statements), sql_file)
 
     connection = get_connection()

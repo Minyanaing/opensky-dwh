@@ -37,13 +37,15 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Fill in `.env`: `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` (or just `DATABRICKS_TOKEN` if you're using the PAT fallback instead). Then:
+Fill in `.env`: `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` (or just `DATABRICKS_TOKEN` if you're using the PAT fallback instead). Also set `ADMIN_PRINCIPAL` to your own account's login email — see the callout below for why. Then:
 
 ```
 python databricks_setup.py
 ```
 
-Success looks like log lines for each of the 5 DDL statements, ending in `Databricks landing setup complete`. Verify in **Catalog Explorer**: `opensky_raw` → `bronze` → `flights_raw` / `callsigns` / `airports` should all exist (empty is fine, they've just been created). Safe to re-run any time — every statement is `IF NOT EXISTS`.
+Success looks like log lines for each DDL statement (5, or 6 if `ADMIN_PRINCIPAL` is set), ending in `Databricks landing setup complete`. Verify in **Catalog Explorer**: `opensky_raw` → `bronze` → `flights_raw` / `callsigns` / `airports` should all exist (empty is fine, they've just been created). Safe to re-run any time — every statement is `IF NOT EXISTS` (or a plain re-grant, for the `ADMIN_PRINCIPAL` one).
+
+> **Why `ADMIN_PRINCIPAL` matters, and what happens if you skip it:** the service principal that runs this script *owns* everything it creates (Unity Catalog's ownership-by-creation model — see the plan's Key design decisions). That means **your own admin login won't be able to see `opensky_raw` in Catalog Explorer** unless it's either the true metastore admin (different from, and easily confused with, being a *workspace* admin — this exact confusion is how the catalog went briefly invisible during initial setup) or has been explicitly granted access. Setting `ADMIN_PRINCIPAL` to your email makes `setup.sql`'s last statement grant you `USE CATALOG`/`USE SCHEMA`/`SELECT` automatically, every run — no manual one-off `GRANT` needed. Leave it unset and that statement is skipped entirely; you'll still be able to run everything via the service principal, you just won't be able to browse the catalog yourself without a separate manual grant.
 
 ### 1e. Test it via CI/CD (`infra-deploy.yml`)
 
@@ -156,6 +158,7 @@ Because callsigns/airports are append-only-if-new, most runs process a small "wh
 | `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH` | both workflows |
 | `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` | both workflows |
 | `DATABRICKS_TOKEN` | fallback, instead of the two above |
+| `ADMIN_PRINCIPAL` | `infra-deploy.yml` (optional — see Section 1d) |
 | `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET` | `de-ingest.yml` |
 
 `de-ingest.yml` isn't on any schedule yet — GitHub's built-in `schedule:` is deliberately not used (only fires from the default branch, delayed/dropped under load); wiring up an external cron (e.g. cron-job.org) to hit its `repository_dispatch` endpoint is a manual step outside this repo.
