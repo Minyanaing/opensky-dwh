@@ -24,6 +24,18 @@ jobs:
         working-directory: de-pipeline/ingestion
         run: pip install -r requirements.txt
 
+      - name: Network diagnostics (temporary - remove once auth.opensky-network.org is diagnosed)
+        continue-on-error: true
+        run: |
+          echo "== DNS: auth.opensky-network.org =="
+          python3 -c "import socket; print(socket.getaddrinfo('auth.opensky-network.org', 443))"
+          echo "== DNS: opensky-network.org =="
+          python3 -c "import socket; print(socket.getaddrinfo('opensky-network.org', 443))"
+          echo "== curl auth host (10s connect timeout) =="
+          curl -v --connect-timeout 10 https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token
+          echo "== curl api host (10s connect timeout) =="
+          curl -v --connect-timeout 10 "https://opensky-network.org/api/states/all"
+
       - name: Fetch OpenSky flights and land directly in Databricks
         working-directory: de-pipeline/ingestion
         env:
