@@ -8,5 +8,6 @@ venv/
 de-pipeline/ingestion/.env
 de-pipeline/ingestion/data/
 
-# Databricks credentials (later steps)
+# Databricks credentials
 de-pipeline/.keys/
+de-pipeline/databricks/.env

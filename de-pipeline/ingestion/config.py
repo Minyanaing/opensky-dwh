@@ -25,6 +25,11 @@ MAX_DAY_PARTITIONS_PER_CHUNK = 2
 # --- Output ---
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent / "data")))
 
+# --- Ingest mode ---
+# "databricks" -> ingest_opensky.py writes straight to opensky_raw.bronze, no local files.
+# "" (default) -> writes flights_raw.json/callsigns.csv/airports.csv to OUTPUT_DIR instead.
+INGEST_MODE = os.environ.get("INGEST_MODE", "").strip().lower()
+
 # --- Curated Southeast Asia international airports (ICAO, name, country, city) ---
 # One row per nationally-designated international airport across all 11 SEA countries.
 AIRPORTS = [
