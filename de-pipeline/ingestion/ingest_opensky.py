@@ -1,10 +1,13 @@
 """Entry point: pull a rolling trailing window of arrivals/departures for every curated
-Southeast Asia airport and write the raw OpenSky records to a local JSON file.
+Southeast Asia airport and write three local files - the raw records plus two distinct-value
+CSVs derived from them. All three are meant to land in Databricks as separate Bronze objects
+once the Databricks write path is built (flights_raw, callsigns, airports).
 
-Local-only for now: this exports raw JSON to disk. Loading into Databricks is a later step.
+Local-only for now: this exports to disk. Loading into Databricks is a later step.
 """
 
 import argparse
+import csv
 import json
 import logging
 import time
@@ -13,7 +16,7 @@ from pathlib import Path
 
 import config
 from fetch_data import TokenManager, chunk_window, fetch_arrivals, fetch_departures
-from transforms import dedupe, tag_record, utc_now_iso
+from transforms import dedupe, distinct_airports, distinct_callsigns, tag_record, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +63,9 @@ def run(lookback_days, output_dir, airport_codes=None):
     token_manager = TokenManager()
 
     now = datetime.now(timezone.utc)
-    window_end = now.timestamp()
-    window_start = (now - timedelta(days=lookback_days)).timestamp()
-    chunks = chunk_window(window_start, window_end)
+    window_start = now
+    window_end = now - timedelta(days=lookback_days)
+    chunks = chunk_window(window_end.timestamp(), window_start.timestamp())
 
     logger.info(
         "Window: last %s day(s) -> %s chunk(s). %s airport(s) x 2 directions x %s chunk(s) = %s API calls",
@@ -97,12 +100,37 @@ def run(lookback_days, output_dir, airport_codes=None):
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    file_path = out_dir / f"flights_raw_{now.strftime('%Y%m%dT%H%M%SZ')}.json"
-    with open(file_path, "w", encoding="utf-8") as f:
+
+    flights_path = out_dir / "flights_raw.json"
+    with open(flights_path, "w", encoding="utf-8") as f:
         json.dump(deduped, f, indent=2, ensure_ascii=False)
 
-    logger.info("Wrote %s record(s) to %s", len(deduped), file_path)
-    return file_path
+    callsigns = distinct_callsigns(deduped)
+    callsigns_path = out_dir / "callsigns.csv"
+    _write_csv(callsigns_path, ["callsign"], callsigns)
+
+    airports = distinct_airports(deduped)
+    airports_path = out_dir / "airports.csv"
+    _write_csv(airports_path, ["icao"], airports)
+
+    logger.info(
+        "Wrote %s flight record(s) -> %s | %s distinct callsign(s) -> %s | %s distinct airport(s) -> %s",
+        len(deduped),
+        flights_path,
+        len(callsigns),
+        callsigns_path,
+        len(airports),
+        airports_path,
+    )
+    return {"flights": flights_path, "callsigns": callsigns_path, "airports": airports_path}
+
+
+def _write_csv(file_path, header, values):
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        for value in values:
+            writer.writerow([value])
 
 
 def main():

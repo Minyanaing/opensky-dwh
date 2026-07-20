@@ -2,6 +2,7 @@
 
 import logging
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -52,17 +53,26 @@ class TokenManager:
         logger.debug("Refreshed OpenSky OAuth2 token")
 
 
-def chunk_window(begin, end, max_hours=None):
-    """Split [begin, end) (unix seconds) into consecutive chunks no longer than max_hours.
+def _start_of_utc_day(ts):
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return dt.timestamp()
 
-    OpenSky's /flights/arrival and /flights/departure cap each call at a 2-day span.
+
+def chunk_window(begin, end, max_day_partitions=None):
+    """Split [begin, end) (unix seconds) into chunks that each touch at most
+    `max_day_partitions` UTC calendar days.
+
+    OpenSky partitions /flights/arrival and /flights/departure data by UTC calendar day and
+    rejects a query that spills into a 3rd day-partition - this depends on which day the chunk
+    *starts* on, not on its raw duration in hours, so chunk boundaries must be day-aligned.
     """
-    max_hours = max_hours or config.MAX_WINDOW_HOURS
-    step_seconds = max_hours * 3600
+    max_day_partitions = max_day_partitions or config.MAX_DAY_PARTITIONS_PER_CHUNK
     chunks = []
     chunk_start = begin
     while chunk_start < end:
-        chunk_end = min(chunk_start + step_seconds, end)
+        day_start = _start_of_utc_day(chunk_start)
+        chunk_cap = day_start + max_day_partitions * 86400
+        chunk_end = min(chunk_cap, end)
         chunks.append((chunk_start, chunk_end))
         chunk_start = chunk_end
     return chunks
@@ -97,7 +107,13 @@ def _get(token_manager, path, params):
             time.sleep(wait_seconds)
             continue
 
-        response.raise_for_status()
+        if not response.ok:
+            # raise_for_status() alone drops the response body, which is where OpenSky puts the
+            # actual reason (e.g. which constraint on begin/end/airport was violated).
+            raise requests.HTTPError(
+                f"{response.status_code} error calling {path} params={params}: {response.text[:500]}",
+                response=response,
+            )
         return response.json()
 
     if last_exc:
@@ -113,3 +129,8 @@ def fetch_departures(token_manager, icao, begin, end):
 def fetch_arrivals(token_manager, icao, begin, end):
     """One page of /flights/arrival — flights that arrived at `icao` in [begin, end)."""
     return _get(token_manager, "/flights/arrival", {"airport": icao, "begin": int(begin), "end": int(end)})
+
+
+def fetch_aircraft_flights(token_manager, icao24, begin, end):
+    """One page of /flights/aircraft — flights flown by aircraft `icao24` in [begin, end)."""
+    return _get(token_manager, "/flights/aircraft", {"icao24": icao24, "begin": int(begin), "end": int(end)})

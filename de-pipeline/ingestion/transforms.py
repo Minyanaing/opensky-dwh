@@ -36,3 +36,21 @@ def dedupe(records):
         seen.add(key)
         deduped.append(record)
     return deduped
+
+
+def distinct_callsigns(records):
+    """Distinct, whitespace-stripped callsigns seen across a batch of tagged flight records."""
+    callsigns = {record["callsign"].strip() for record in records if record.get("callsign", "").strip()}
+    return sorted(callsigns)
+
+
+def distinct_airports(records):
+    """Distinct ICAO airport codes seen across a batch - both ends of every flight, not just
+    the curated airport that was queried (e.g. a departure's foreign destination)."""
+    airports = set()
+    for record in records:
+        for field in ("estDepartureAirport", "estArrivalAirport"):
+            value = record.get(field)
+            if value:
+                airports.add(value)
+    return sorted(airports)

@@ -18,9 +18,9 @@ OPENSKY_API_BASE_URL = "https://opensky-network.org/api"
 
 # --- Ingestion window ---
 LOOKBACK_DAYS = float(os.environ.get("LOOKBACK_DAYS", "3"))
-# OpenSky's /flights/arrival and /flights/departure cap each call at a 2-day (48h) span.
-# Chunk at 47h to stay comfortably under that cap.
-MAX_WINDOW_HOURS = 47
+# OpenSky partitions /flights/arrival and /flights/departure data by UTC calendar day and
+# rejects a query that touches more than this many day-partitions - not a fixed duration cap.
+MAX_DAY_PARTITIONS_PER_CHUNK = 2
 
 # --- Output ---
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent / "data")))
