@@ -1,15 +1,6 @@
-"""Creates the Unity Catalog landing (Bronze) objects for OpenSky ingestion.
-
-Scope: the *landing* catalog only (`opensky_raw`, schema `bronze`, and its three tables -
-flights_raw, callsigns, airports - matching what ingest_opensky.py exports). The dev/qa/prod
-catalogs for the dbt Silver/Gold layers are a separate, later step.
-
-Runs the idempotent DDL in setup.sql over a Databricks SQL Warehouse connection, authenticating
-as a service principal (OAuth M2M) - or a personal access token as a fallback. This is also
-what the infra-deploy.yml GitHub Actions workflow runs on merge to main. See README.md for the
-one-time manual setup this depends on (creating the service principal, granting it CREATE
-CATALOG on the metastore, granting it CAN_USE on the SQL warehouse).
-"""
+"""Applies setup.sql (Unity Catalog landing objects) over a Databricks SQL Warehouse connection -
+service principal OAuth M2M, or PAT fallback. Also what infra-deploy.yml runs on merge to main.
+See README.md for one-time setup (service principal, CREATE CATALOG grant, warehouse CAN_USE)."""
 
 import logging
 import os
@@ -66,19 +57,15 @@ def get_connection():
 
 
 def _statements(sql_text):
-    """Drop comment/blank lines first, then split what's left on ';' into statements.
-
-    Comments must be stripped *before* splitting on ';' - a semicolon inside a `--` comment
-    (e.g. in prose explaining the SQL) would otherwise create a spurious statement boundary.
-    """
+    """Drop comment/blank lines, then split on ';' - comments must go first, or a semicolon
+    inside one creates a spurious split."""
     code_lines = [line for line in sql_text.splitlines() if line.strip() and not line.strip().startswith("--")]
     code_only = "\n".join(code_lines)
     return [statement.strip() for statement in code_only.split(";") if statement.strip()]
 
 
 def _apply_admin_principal(statements):
-    """Substitute {{ADMIN_PRINCIPAL}} from the env var of the same name, or drop any statement
-    that references it if the env var isn't set - it's an optional grant, not a required one."""
+    """Substitute {{ADMIN_PRINCIPAL}} from its env var, or drop the statement if unset."""
     admin_principal = os.environ.get("ADMIN_PRINCIPAL", "").strip()
     if admin_principal:
         return [s.replace("{{ADMIN_PRINCIPAL}}", f"`{admin_principal}`") for s in statements]

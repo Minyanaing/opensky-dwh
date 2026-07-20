@@ -7,8 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- OpenSky OAuth2 client-credentials (standard tier, 4,000 credits/day) ---
-# Register a client at https://opensky-network.org/my-opensky -> API Client
+# OpenSky OAuth2 client-credentials - register at opensky-network.org/my-opensky (API Client)
 OPENSKY_CLIENT_ID = os.environ.get("OPENSKY_CLIENT_ID", "")
 OPENSKY_CLIENT_SECRET = os.environ.get("OPENSKY_CLIENT_SECRET", "")
 OPENSKY_TOKEN_URL = (
@@ -16,22 +15,16 @@ OPENSKY_TOKEN_URL = (
 )
 OPENSKY_API_BASE_URL = "https://opensky-network.org/api"
 
-# --- Ingestion window ---
 LOOKBACK_DAYS = float(os.environ.get("LOOKBACK_DAYS", "3"))
-# OpenSky partitions /flights/arrival and /flights/departure data by UTC calendar day and
-# rejects a query that touches more than this many day-partitions - not a fixed duration cap.
+# OpenSky caps queries by UTC day-partitions touched, not call duration.
 MAX_DAY_PARTITIONS_PER_CHUNK = 2
 
-# --- Output ---
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent / "data")))
 
-# --- Ingest mode ---
-# "databricks" -> ingest_opensky.py writes straight to opensky_raw.bronze, no local files.
-# "" (default) -> writes flights_raw.json/callsigns.csv/airports.csv to OUTPUT_DIR instead.
+# "databricks" = write straight to opensky_raw.bronze; "" = write local files instead.
 INGEST_MODE = os.environ.get("INGEST_MODE", "").strip().lower()
 
-# --- Curated Southeast Asia international airports (ICAO, name, country, city) ---
-# One row per nationally-designated international airport across all 11 SEA countries.
+# Curated Southeast Asia international airports (ICAO, name, country, city).
 AIRPORTS = [
     {"icao": "WBSB", "name": "Brunei International Airport", "country": "Brunei", "city": "Bandar Seri Begawan"},
     {"icao": "VDTI", "name": "Techo International Airport", "country": "Cambodia", "city": "Phnom Penh"},

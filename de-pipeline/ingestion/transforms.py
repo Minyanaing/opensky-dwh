@@ -45,8 +45,7 @@ def distinct_callsigns(records):
 
 
 def distinct_airports(records):
-    """Distinct ICAO airport codes seen across a batch - both ends of every flight, not just
-    the curated airport that was queried (e.g. a departure's foreign destination)."""
+    """Distinct ICAO codes from both ends of every flight, not just the queried airport."""
     airports = set()
     for record in records:
         for field in ("estDepartureAirport", "estArrivalAirport"):
