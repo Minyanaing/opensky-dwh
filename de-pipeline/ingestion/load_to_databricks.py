@@ -1,21 +1,7 @@
-"""Databricks write functions for the opensky_raw.bronze tables created by
-databricks/databricks_setup.py, plus a CLI that loads ingest_opensky.py's local exports.
-
-Two ways this gets used:
-- Directly, in-process: when INGEST_MODE=databricks, ingest_opensky.py imports this module and
-  calls insert_flights/insert_new_callsigns/insert_new_airports with the records it already
-  built in memory - no local file ever gets written.
-- As a CLI (`python load_to_databricks.py`): reads flights_raw.json/callsigns.csv/airports.csv
-  from a previous local-mode ingest_opensky.py run and loads them the same way. Useful for local
-  testing, or to (re)load an export without live OpenSky credentials.
-
-flights_raw is a pure append-only event log - every fetch is a genuinely new observation, so
-every row from every run gets inserted. callsigns/airports are append-only-*if-new*: before
-inserting, the distinct values already present are queried, and only values not already there
-are inserted, stamped with this run's `_loaded_at`. That makes `_loaded_at` a discovery-batch
-marker - MAX(`_loaded_at`) identifies exactly the newest run's batch of newly-discovered values,
-which is what ingest_adsbdb.py queries for.
-"""
+"""Databricks write functions for opensky_raw.bronze - used directly, in-process, by
+ingest_opensky.py (INGEST_MODE=databricks), and via this file's CLI to (re)load a previous
+local export. flights_raw is append-only; callsigns/airports are append-only-*if-new*, stamped
+with that run's _loaded_at (see insert_new_callsigns/insert_new_airports)."""
 
 import argparse
 import csv
@@ -129,8 +115,7 @@ def insert_new_airports(cursor, airports, loaded_at):
 
 
 def land_in_databricks(flights, callsigns, airports):
-    """Open one connection, insert all three, close it. Used directly by ingest_opensky.py
-    when INGEST_MODE=databricks - no local file involved."""
+    """Open one connection, insert all three tables, close it - the INGEST_MODE=databricks path."""
     loaded_at = datetime.now(timezone.utc)
     connection = get_connection()
     try:

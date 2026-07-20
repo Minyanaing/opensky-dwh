@@ -1,23 +1,8 @@
-"""Enrich the newest batch of callsigns/aircraft with airline, aircraft, and callsign/route
-details from the free, keyless adsbdb.com API (https://www.adsbdb.com/) - community-maintained,
-not authoritative, same caveat as OpenSky's own `est*` fields.
-
-Reads directly from Databricks (opensky_raw.bronze), not local files:
-- callsigns table  -> only the latest discovery batch (MAX(_loaded_at)) -> GET /callsign/{callsign}
-- airports table   -> only the latest discovery batch (MAX(_loaded_at)) -> not queried against
-  adsbdb (it has no airport-lookup endpoint - see below), kept for completeness/inspection
-- flights_raw table -> only the latest batch's distinct icao24 -> GET /aircraft/{mode_s}
-Airline codes are derived from callsign ICAO prefixes and looked up separately via
-GET /airline/{code} for a clean, deduped airline reference set.
-
-Because callsigns/airports are append-only-*if-new* (load_to_databricks.py), the latest batch
-is usually small - just what's genuinely new since the last run - rather than the full curated
-set every time. adsbdb has no airport-lookup endpoint, so airport codes are read for visibility
-but not looked up.
-
-Output is still local JSON (adsbdb_callsigns.json / adsbdb_aircraft.json / adsbdb_airlines.json)
-in OUTPUT_DIR - only the input source moved to Databricks, not the output.
-"""
+"""Enrich the newest batch of callsigns/aircraft with airline/aircraft/route details from the
+free, keyless adsbdb.com API - community-maintained, not authoritative. Reads the latest
+discovery batch (MAX(_loaded_at)) from opensky_raw.bronze's callsigns/flights_raw tables, not
+local files; writes local JSON output (adsbdb has no airport-lookup endpoint, so airports are
+read but not queried)."""
 
 import argparse
 import json
@@ -41,21 +26,16 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 5
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
-# This script processes one discovery batch at a time, but caps it as a safety net for an
-# unusually large first-ever batch, rather than the everyday throttle it used to be.
+# Safety cap for an unusually large batch, not the everyday throttle it used to be.
 MAX_LOCAL_TEST_ITEMS = 20
 
-# ICAO flight-callsign convention: 3-letter airline designator + a flight number/suffix.
-# General-aviation callsigns (often just a tail number, e.g. "N8577FT") don't match this and
-# are skipped rather than mined for a bogus "airline code".
+# ICAO callsign convention: 3 letters + digits. Skips GA tail-number-style callsigns.
 _AIRLINE_PREFIX_RE = re.compile(r"^([A-Z]{3})\d")
 
 
 def _get(path):
     """GET one adsbdb endpoint, unwrapped from its {"response": ...} envelope.
-
-    Returns None on 404 (not in adsbdb's crowdsourced database - not an error).
-    """
+    None on 404 (not found, not an error)."""
     url = f"{ADSBDB_BASE_URL}{path}"
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -91,8 +71,7 @@ def _get(path):
 
 
 def _latest_batch(cursor, table, column):
-    """Distinct values from `table` whose `_loaded_at` equals the table's own max - i.e. only
-    the most recent run's discovery batch, not the table's full history."""
+    """Distinct values from the table's most recent _loaded_at batch only."""
     cursor.execute(
         f"SELECT DISTINCT `{column}` FROM {CATALOG}.{SCHEMA}.{table} "
         f"WHERE `_loaded_at` = (SELECT MAX(`_loaded_at`) FROM {CATALOG}.{SCHEMA}.{table})"
@@ -101,8 +80,7 @@ def _latest_batch(cursor, table, column):
 
 
 def derive_airline_codes(callsigns):
-    """Extract distinct ICAO airline designators from callsign prefixes, skipping any
-    callsign that doesn't look like a scheduled-flight callsign (e.g. GA tail numbers)."""
+    """Distinct ICAO airline designators from callsign prefixes."""
     codes = set()
     for callsign in callsigns:
         match = _AIRLINE_PREFIX_RE.match(callsign.strip().upper())

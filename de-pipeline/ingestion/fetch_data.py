@@ -59,13 +59,8 @@ def _start_of_utc_day(ts):
 
 
 def chunk_window(begin, end, max_day_partitions=None):
-    """Split [begin, end) (unix seconds) into chunks that each touch at most
-    `max_day_partitions` UTC calendar days.
-
-    OpenSky partitions /flights/arrival and /flights/departure data by UTC calendar day and
-    rejects a query that spills into a 3rd day-partition - this depends on which day the chunk
-    *starts* on, not on its raw duration in hours, so chunk boundaries must be day-aligned.
-    """
+    """Split [begin, end) into chunks touching at most `max_day_partitions` UTC calendar days -
+    OpenSky's real limit is day-aligned, not a fixed duration."""
     max_day_partitions = max_day_partitions or config.MAX_DAY_PARTITIONS_PER_CHUNK
     chunks = []
     chunk_start = begin
@@ -108,8 +103,7 @@ def _get(token_manager, path, params):
             continue
 
         if not response.ok:
-            # raise_for_status() alone drops the response body, which is where OpenSky puts the
-            # actual reason (e.g. which constraint on begin/end/airport was violated).
+            # include body: raise_for_status() alone drops OpenSky's actual error reason
             raise requests.HTTPError(
                 f"{response.status_code} error calling {path} params={params}: {response.text[:500]}",
                 response=response,

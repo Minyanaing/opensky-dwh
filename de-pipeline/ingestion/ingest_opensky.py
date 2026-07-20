@@ -1,12 +1,6 @@
 """Entry point: pull a rolling trailing window of arrivals/departures for every curated
-Southeast Asia airport.
-
-Two modes, controlled by config.INGEST_MODE (env var INGEST_MODE):
-- "" (default, local mode) - writes three local files in OUTPUT_DIR: the raw flight records
-  plus two distinct-value CSVs (flights_raw.json, callsigns.csv, airports.csv).
-- "databricks" - skips local files entirely and lands the same data directly in
-  opensky_raw.bronze via load_to_databricks.py's write functions, in-process.
-"""
+Southeast Asia airport. INGEST_MODE="databricks" lands directly in opensky_raw.bronze;
+"" (default) writes local files (flights_raw.json/callsigns.csv/airports.csv) instead."""
 
 import argparse
 import csv

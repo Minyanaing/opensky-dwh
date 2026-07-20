@@ -1,9 +1,5 @@
-"""Manual test utility: pull /flights/aircraft history for one aircraft and export raw JSON.
-
-Not part of the scheduled ingestion path (Step 2 tracks curated airports, not individual
-aircraft) - this is for ad hoc inspection of what OpenSky returns per aircraft, e.g. to
-check an icao24 seen in a previous ingest_opensky.py output file.
-"""
+"""Manual-test utility: pull /flights/aircraft history for one aircraft and export raw JSON.
+Not part of the scheduled ingestion - for ad hoc inspection of an icao24 seen in a prior run."""
 
 import argparse
 import json
