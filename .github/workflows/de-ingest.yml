@@ -1,0 +1,37 @@
+name: OpenSky ingest + land in Databricks
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Lookback window in days"
+        required: false
+        default: "3"
+  repository_dispatch:
+    types: [de-ingest]
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/ingestion
+        run: pip install -r requirements.txt
+
+      - name: Fetch OpenSky flights and land directly in Databricks
+        working-directory: de-pipeline/ingestion
+        env:
+          OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
+          OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
+          INGEST_MODE: databricks
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python ingest_opensky.py --lookback-days "${{ github.event.inputs.lookback_days || '3' }}"

@@ -1,22 +1,25 @@
-"""Local test: enrich exported OpenSky data with airline, aircraft, and callsign/route
+"""Enrich the newest batch of callsigns/aircraft with airline, aircraft, and callsign/route
 details from the free, keyless adsbdb.com API (https://www.adsbdb.com/) - community-maintained,
 not authoritative, same caveat as OpenSky's own `est*` fields.
 
-Reads local files written by ingest_opensky.py as input:
-- data/callsigns.csv    -> distinct callsigns -> GET /callsign/{callsign}  (route + embedded airline)
-- data/flights_raw.json -> distinct icao24     -> GET /aircraft/{mode_s}   (aircraft details)
-Airline codes are derived from callsign ICAO prefixes (not read from a file) and looked up
-separately via GET /airline/{code} for a clean, deduped airline reference set.
+Reads directly from Databricks (opensky_raw.bronze), not local files:
+- callsigns table  -> only the latest discovery batch (MAX(_loaded_at)) -> GET /callsign/{callsign}
+- airports table   -> only the latest discovery batch (MAX(_loaded_at)) -> not queried against
+  adsbdb (it has no airport-lookup endpoint - see below), kept for completeness/inspection
+- flights_raw table -> only the latest batch's distinct icao24 -> GET /aircraft/{mode_s}
+Airline codes are derived from callsign ICAO prefixes and looked up separately via
+GET /airline/{code} for a clean, deduped airline reference set.
 
-airports.csv is not used here: adsbdb has no airport-lookup endpoint (confirmed against its
-API docs) - airport enrichment is a separate concern (e.g. an OurAirports-based seed).
+Because callsigns/airports are append-only-*if-new* (load_to_databricks.py), the latest batch
+is usually small - just what's genuinely new since the last run - rather than the full curated
+set every time. adsbdb has no airport-lookup endpoint, so airport codes are read for visibility
+but not looked up.
 
-Local-only for now: writes JSON to disk. In Databricks, this will instead read from the Unity
-Catalog tables built off the exported callsigns/airports CSVs (configured later), not local files.
+Output is still local JSON (adsbdb_callsigns.json / adsbdb_aircraft.json / adsbdb_airlines.json)
+in OUTPUT_DIR - only the input source moved to Databricks, not the output.
 """
 
 import argparse
-import csv
 import json
 import logging
 import re
@@ -26,6 +29,7 @@ from pathlib import Path
 import requests
 
 import config
+from load_to_databricks import CATALOG, SCHEMA, get_connection
 from transforms import utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -37,8 +41,8 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 5
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
-# This script is for local testing only - cap each of the three inputs (callsigns, aircraft,
-# derived airline codes) so a test run stays quick regardless of how much ingest_opensky.py pulled.
+# This script processes one discovery batch at a time, but caps it as a safety net for an
+# unusually large first-ever batch, rather than the everyday throttle it used to be.
 MAX_LOCAL_TEST_ITEMS = 20
 
 # ICAO flight-callsign convention: 3-letter airline designator + a flight number/suffix.
@@ -86,15 +90,14 @@ def _get(path):
     raise RuntimeError(f"Exhausted retries calling {path}")
 
 
-def _read_callsigns(csv_path):
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        return [row["callsign"] for row in csv.DictReader(f) if row.get("callsign")]
-
-
-def _read_distinct_icao24(flights_json_path):
-    with open(flights_json_path, encoding="utf-8") as f:
-        flights = json.load(f)
-    return sorted({flight["icao24"] for flight in flights if flight.get("icao24")})
+def _latest_batch(cursor, table, column):
+    """Distinct values from `table` whose `_loaded_at` equals the table's own max - i.e. only
+    the most recent run's discovery batch, not the table's full history."""
+    cursor.execute(
+        f"SELECT DISTINCT `{column}` FROM {CATALOG}.{SCHEMA}.{table} "
+        f"WHERE `_loaded_at` = (SELECT MAX(`_loaded_at`) FROM {CATALOG}.{SCHEMA}.{table})"
+    )
+    return sorted({row[0] for row in cursor.fetchall() if row[0]})
 
 
 def derive_airline_codes(callsigns):
@@ -164,7 +167,7 @@ def fetch_airlines(airline_codes):
 def _cap(items, label):
     if len(items) > MAX_LOCAL_TEST_ITEMS:
         logger.info(
-            "%s %s found, capping this local test run to the first %s",
+            "%s %s in the latest batch, capping this run to the first %s",
             len(items),
             label,
             MAX_LOCAL_TEST_ITEMS,
@@ -181,12 +184,6 @@ def _write_json(file_path, data):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--input-dir",
-        type=str,
-        default=str(config.OUTPUT_DIR),
-        help="Directory holding ingest_opensky.py's callsigns.csv / flights_raw.json (default: %(default)s)",
-    )
-    parser.add_argument(
         "--output-dir",
         type=str,
         default=str(config.OUTPUT_DIR),
@@ -195,19 +192,27 @@ def parse_args():
     return parser.parse_args()
 
 
-def run(input_dir, output_dir):
-    in_dir = Path(input_dir)
+def run(output_dir):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    callsigns = _cap(_read_callsigns(in_dir / "callsigns.csv"), "callsign(s)")
-    icao24_list = _cap(_read_distinct_icao24(in_dir / "flights_raw.json"), "aircraft icao24 value(s)")
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            callsigns = _cap(_latest_batch(cursor, "callsigns", "callsign"), "callsign(s)")
+            icao24_list = _cap(_latest_batch(cursor, "flights_raw", "icao24"), "aircraft icao24 value(s)")
+            airports_batch = _latest_batch(cursor, "airports", "icao")
+    finally:
+        connection.close()
+
     airline_codes = _cap(derive_airline_codes(callsigns), "derived airline code(s)")
 
     logger.info(
-        "%s callsign(s), %s aircraft (icao24), %s derived airline code(s)",
+        "Latest batch: %s callsign(s), %s aircraft (icao24), %s airport(s) (not queried - "
+        "adsbdb has no airport endpoint), %s derived airline code(s)",
         len(callsigns),
         len(icao24_list),
+        len(airports_batch),
         len(airline_codes),
     )
 
@@ -238,7 +243,7 @@ def run(input_dir, output_dir):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args()
-    run(args.input_dir, args.output_dir)
+    run(args.output_dir)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,11 @@
 """Entry point: pull a rolling trailing window of arrivals/departures for every curated
-Southeast Asia airport and write three local files - the raw records plus two distinct-value
-CSVs derived from them. All three are meant to land in Databricks as separate Bronze objects
-once the Databricks write path is built (flights_raw, callsigns, airports).
+Southeast Asia airport.
 
-Local-only for now: this exports to disk. Loading into Databricks is a later step.
+Two modes, controlled by config.INGEST_MODE (env var INGEST_MODE):
+- "" (default, local mode) - writes three local files in OUTPUT_DIR: the raw flight records
+  plus two distinct-value CSVs (flights_raw.json, callsigns.csv, airports.csv).
+- "databricks" - skips local files entirely and lands the same data directly in
+  opensky_raw.bronze via load_to_databricks.py's write functions, in-process.
 """
 
 import argparse
@@ -15,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import config
+import load_to_databricks
 from fetch_data import TokenManager, chunk_window, fetch_arrivals, fetch_departures
 from transforms import dedupe, distinct_airports, distinct_callsigns, tag_record, utc_now_iso
 
@@ -98,24 +101,31 @@ def run(lookback_days, output_dir, airport_codes=None):
     deduped = dedupe(records)
     logger.info("Fetched %s raw record(s), %s after de-dup", len(records), len(deduped))
 
+    callsigns = distinct_callsigns(deduped)
+    airport_codes_seen = distinct_airports(deduped)
+
+    if config.INGEST_MODE == "databricks":
+        return load_to_databricks.land_in_databricks(deduped, callsigns, airport_codes_seen)
+    return _write_local_files(output_dir, deduped, callsigns, airport_codes_seen)
+
+
+def _write_local_files(output_dir, flights, callsigns, airports):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     flights_path = out_dir / "flights_raw.json"
     with open(flights_path, "w", encoding="utf-8") as f:
-        json.dump(deduped, f, indent=2, ensure_ascii=False)
+        json.dump(flights, f, indent=2, ensure_ascii=False)
 
-    callsigns = distinct_callsigns(deduped)
     callsigns_path = out_dir / "callsigns.csv"
     _write_csv(callsigns_path, ["callsign"], callsigns)
 
-    airports = distinct_airports(deduped)
     airports_path = out_dir / "airports.csv"
     _write_csv(airports_path, ["icao"], airports)
 
     logger.info(
         "Wrote %s flight record(s) -> %s | %s distinct callsign(s) -> %s | %s distinct airport(s) -> %s",
-        len(deduped),
+        len(flights),
         flights_path,
         len(callsigns),
         callsigns_path,
