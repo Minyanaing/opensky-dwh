@@ -1,26 +1,21 @@
-"""Manually load an already-exported flights_raw.json / callsigns.csv / airports.csv into
-opensky_raw.bronze - for data that was fetched and saved earlier (e.g. ingest_opensky.py in
-local mode, or any other one-off export), without re-fetching from the OpenSky API.
+"""Rebuild distinct-value CSVs from an existing flights_raw.csv:
+- convert_flight_raw.csv - flight records, re-written through databricks/setup.sql's
+  opensky_raw.bronze.flights_raw column set.
+- convert_callsigns.csv  - distinct callsigns extracted from the same file.
+- convert_airports.csv   - distinct airport codes extracted from the same file (both ends of
+  every flight, same as ingest_opensky.py's distinct_airports()).
 
-Reuses load_to_databricks.py's Databricks-write functions (insert_flights/insert_new_callsigns/
-insert_new_airports) rather than duplicating them - this script only adds file reading,
-per-file validation, and a clearer manual CLI/summary on top.
-
-One file loads to one table, fully, before the next file starts: each file is read only when
-its own turn comes up (not all three upfront), and each file's rows are inserted into its table
-in a single call - not chunked into batches. A failure partway through leaves earlier files
-already landed, but a given file's own insert is one all-or-nothing call.
+Useful to regenerate a consistent callsigns/airports snapshot straight from a flights_raw.csv,
+independent of ingest_opensky.py's own new-since-last-run tracking.
 """
 
 import argparse
 import csv
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 import config
-from load_to_databricks import get_connection, insert_flights, insert_new_airports, insert_new_callsigns
+from transforms import distinct_airports, distinct_callsigns
 
 logger = logging.getLogger(__name__)
 
@@ -31,98 +26,79 @@ def _require_file(path):
     return path
 
 
-def read_flights(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def read_column(path, column):
+def read_flights_csv(path):
     with open(path, newline="", encoding="utf-8") as f:
-        return [row[column] for row in csv.DictReader(f) if row.get(column)]
+        return list(csv.DictReader(f))
+
+
+def write_flights_csv(path, flights):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=config.FLIGHT_COLUMNS, extrasaction="ignore", restval="")
+        writer.writeheader()
+        for flight in flights:
+            writer.writerow(flight)
+
+
+def write_column_csv(path, header, values):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([header])
+        for value in values:
+            writer.writerow([value])
 
 
 def parse_args():
     default_dir = config.OUTPUT_DIR
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--flights-json",
+        "--flights-csv",
         type=str,
-        default=str(default_dir / "flights_raw.json"),
-        help="Path to the raw flights JSON export (default: %(default)s)",
+        default=str(default_dir / "flights_raw.csv"),
+        help="Path to the existing flights_raw.csv to rebuild from (default: %(default)s)",
     )
     parser.add_argument(
-        "--callsigns-csv",
+        "--output-dir",
         type=str,
-        default=str(default_dir / "callsigns.csv"),
-        help="Path to the distinct-callsigns CSV export (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--airports-csv",
-        type=str,
-        default=str(default_dir / "airports.csv"),
-        help="Path to the distinct-airports CSV export (default: %(default)s)",
+        default=str(default_dir),
+        help="Directory to write convert_flight_raw.csv/convert_callsigns.csv/convert_airports.csv "
+        "to (default: %(default)s)",
     )
     return parser.parse_args()
 
 
-def _load_file_to_table(cursor, table, path, reader, writer, loaded_at):
-    """Read one file completely, then insert it into its one target table in a single call -
-    fully, before the caller moves on to the next file."""
-    values = reader(path)
-    logger.info("Read %s record(s) from %s", len(values), path)
-    landed = writer(cursor, values, loaded_at)
-    logger.info("%s: %s row(s) landed", table, len(landed))
-    return landed
+def run(flights_csv_path, output_dir):
+    csv_path = _require_file(Path(flights_csv_path))
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
+    flights = read_flights_csv(csv_path)
+    logger.info("Read %s flight record(s) from %s", len(flights), csv_path)
 
-def run(flights_json_path, callsigns_csv_path, airports_csv_path):
-    flights_path = _require_file(Path(flights_json_path))
-    callsigns_path = _require_file(Path(callsigns_csv_path))
-    airports_path = _require_file(Path(airports_csv_path))
+    flights_csv_out_path = out_dir / "convert_flight_raw.csv"
+    write_flights_csv(flights_csv_out_path, flights)
+    logger.info("Wrote %s flight record(s) -> %s", len(flights), flights_csv_out_path)
 
-    loaded_at = datetime.now(timezone.utc)
+    callsigns = distinct_callsigns(flights)
+    callsigns_csv_path = out_dir / "convert_callsigns.csv"
+    write_column_csv(callsigns_csv_path, "callsign", callsigns)
+    logger.info("Wrote %s distinct callsign(s) -> %s", len(callsigns), callsigns_csv_path)
 
-    connection = get_connection()
-    try:
-        with connection.cursor() as cursor:
-            flights = _load_file_to_table(
-                cursor, "flights_raw", flights_path, read_flights, insert_flights, loaded_at
-            )
-            new_callsigns = _load_file_to_table(
-                cursor,
-                "callsigns",
-                callsigns_path,
-                lambda p: read_column(p, "callsign"),
-                insert_new_callsigns,
-                loaded_at,
-            )
-            new_airports = _load_file_to_table(
-                cursor,
-                "airports",
-                airports_path,
-                lambda p: read_column(p, "icao"),
-                insert_new_airports,
-                loaded_at,
-            )
-    finally:
-        connection.close()
+    airports = distinct_airports(flights)
+    airports_csv_path = out_dir / "convert_airports.csv"
+    write_column_csv(airports_csv_path, "icao", airports)
+    logger.info("Wrote %s distinct airport(s) -> %s", len(airports), airports_csv_path)
 
-    logger.info(
-        "Landed in opensky_raw.bronze: %s flight row(s), %s new callsign(s), %s new airport(s)",
-        len(flights),
-        len(new_callsigns),
-        len(new_airports),
-    )
-    return {"flights": len(flights), "new_callsigns": new_callsigns, "new_airports": new_airports}
+    return {
+        "flights": flights_csv_out_path,
+        "callsigns": callsigns_csv_path,
+        "airports": airports_csv_path,
+    }
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    # databricks-sql-connector logs every HTTP request/response at INFO - drowns out our own
-    # per-file progress lines. Keep our logging at INFO, quiet just this library.
-    logging.getLogger("databricks").setLevel(logging.WARNING)
     args = parse_args()
-    run(args.flights_json, args.callsigns_csv, args.airports_csv)
+    run(args.flights_csv, args.output_dir)
 
 
 if __name__ == "__main__":
