@@ -23,6 +23,14 @@ RETRY_BACKOFF_SECONDS = 5
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+def _log_server_retry_hint(response):
+    """Log the server's suggested wait time for visibility only - actual retry pacing always
+    stays at the fixed RETRY_BACKOFF_SECONDS, regardless of what this says."""
+    value = response.headers.get("X-Rate-Limit-Retry-After-Seconds") or response.headers.get("Retry-After")
+    if value is not None:
+        logger.info("Server-suggested retry wait: %ss (not used - retrying in %ss anyway)", value, RETRY_BACKOFF_SECONDS)
+
+
 class TokenManager:
     """Fetches and caches an OpenSky OAuth2 client-credentials token, refreshing before it expires."""
 
@@ -62,15 +70,15 @@ class TokenManager:
                 continue
 
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-                wait_seconds = int(response.headers.get("Retry-After", RETRY_BACKOFF_SECONDS))
+                _log_server_retry_hint(response)
                 logger.warning(
                     "HTTP %s on token endpoint, retrying in %ss (attempt %s/%s)",
                     response.status_code,
-                    wait_seconds,
+                    RETRY_BACKOFF_SECONDS,
                     attempt,
                     MAX_RETRIES,
                 )
-                time.sleep(wait_seconds)
+                time.sleep(RETRY_BACKOFF_SECONDS)
                 continue
 
             response.raise_for_status()
@@ -119,20 +127,24 @@ def _get(token_manager, path, params):
             time.sleep(RETRY_BACKOFF_SECONDS)
             continue
 
+        remaining = response.headers.get("X-Rate-Limit-Remaining")
+        if remaining is not None:
+            logger.info("Rate limit remaining after %s: %s", path, remaining)
+
         if response.status_code == 404:
             return []  # no flights in this window - not an error
 
         if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-            wait_seconds = int(response.headers.get("Retry-After", RETRY_BACKOFF_SECONDS))
+            _log_server_retry_hint(response)
             logger.warning(
                 "HTTP %s on %s, retrying in %ss (attempt %s/%s)",
                 response.status_code,
                 path,
-                wait_seconds,
+                RETRY_BACKOFF_SECONDS,
                 attempt,
                 MAX_RETRIES,
             )
-            time.sleep(wait_seconds)
+            time.sleep(RETRY_BACKOFF_SECONDS)
             continue
 
         if not response.ok:

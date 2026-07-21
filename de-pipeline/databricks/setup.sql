@@ -5,6 +5,9 @@ CREATE CATALOG IF NOT EXISTS opensky_raw;
 
 CREATE SCHEMA IF NOT EXISTS opensky_raw.bronze;
 
+-- Landing volume: load_to_databricks.py uploads CSVs here (fast file copy) instead of
+CREATE VOLUME IF NOT EXISTS opensky_raw.bronze.landing;
+
 -- Departures + arrivals share one table, split by movement_type.
 CREATE TABLE IF NOT EXISTS opensky_raw.bronze.flights_raw (
     `icao24` STRING,

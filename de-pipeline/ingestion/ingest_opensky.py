@@ -1,17 +1,16 @@
 """Entry point: pull a rolling trailing window of arrivals/departures for every curated
-Southeast Asia airport. INGEST_MODE="databricks" lands directly in opensky_raw.bronze;
-"" (default) writes local files (flights_raw.json/callsigns.csv/airports.csv) instead."""
+Southeast Asia airport, and write three local CSV files (flights_raw.csv, callsigns.csv,
+airports.csv). This script never talks to Databricks - load_to_databricks.py uploads these
+files to a Databricks Volume as a separate step."""
 
 import argparse
 import csv
-import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import config
-import load_to_databricks
 from fetch_data import TokenManager, chunk_window, fetch_arrivals, fetch_departures
 from transforms import dedupe, distinct_airports, distinct_callsigns, tag_record, utc_now_iso
 
@@ -32,7 +31,7 @@ def parse_args():
         "--output-dir",
         type=str,
         default=str(config.OUTPUT_DIR),
-        help="Directory to write the output JSON file to (default: %(default)s)",
+        help="Directory to write the output CSV files to (default: %(default)s)",
     )
     parser.add_argument(
         "--airports",
@@ -98,8 +97,6 @@ def run(lookback_days, output_dir, airport_codes=None):
     callsigns = distinct_callsigns(deduped)
     airport_codes_seen = distinct_airports(deduped)
 
-    if config.INGEST_MODE == "databricks":
-        return load_to_databricks.land_in_databricks(deduped, callsigns, airport_codes_seen)
     return _write_local_files(output_dir, deduped, callsigns, airport_codes_seen)
 
 
@@ -107,9 +104,8 @@ def _write_local_files(output_dir, flights, callsigns, airports):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    flights_path = out_dir / "flights_raw.json"
-    with open(flights_path, "w", encoding="utf-8") as f:
-        json.dump(flights, f, indent=2, ensure_ascii=False)
+    flights_path = out_dir / "flights_raw.csv"
+    _write_dict_csv(flights_path, config.FLIGHT_COLUMNS, flights)
 
     callsigns_path = out_dir / "callsigns.csv"
     _write_csv(callsigns_path, ["callsign"], callsigns)
@@ -127,6 +123,14 @@ def _write_local_files(output_dir, flights, callsigns, airports):
         airports_path,
     )
     return {"flights": flights_path, "callsigns": callsigns_path, "airports": airports_path}
+
+
+def _write_dict_csv(file_path, fieldnames, records):
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for record in records:
+            writer.writerow(record)
 
 
 def _write_csv(file_path, header, values):
