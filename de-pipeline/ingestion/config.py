@@ -15,14 +15,31 @@ OPENSKY_TOKEN_URL = (
 )
 OPENSKY_API_BASE_URL = "https://opensky-network.org/api"
 
-LOOKBACK_DAYS = float(os.environ.get("LOOKBACK_DAYS", "3"))
+LOOKBACK_DAYS = float(os.environ.get("LOOKBACK_DAYS", "2"))
 # OpenSky caps queries by UTC day-partitions touched, not call duration.
 MAX_DAY_PARTITIONS_PER_CHUNK = 2
 
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent / "data")))
 
-# "databricks" = write straight to opensky_raw.bronze; "" = write local files instead.
-INGEST_MODE = os.environ.get("INGEST_MODE", "").strip().lower()
+# Column order for flights_raw.csv - matches databricks/setup.sql's flights_raw table, minus
+# _loaded_at (added when the CSV is loaded into Databricks, not at ingest time).
+FLIGHT_COLUMNS = [
+    "icao24",
+    "callsign",
+    "estDepartureAirport",
+    "estArrivalAirport",
+    "firstSeen",
+    "lastSeen",
+    "estDepartureAirportHorizDistance",
+    "estDepartureAirportVertDistance",
+    "estArrivalAirportHorizDistance",
+    "estArrivalAirportVertDistance",
+    "departureAirportCandidatesCount",
+    "arrivalAirportCandidatesCount",
+    "queried_airport",
+    "movement_type",
+    "fetched_at",
+]
 
 # Curated Southeast Asia international airports (ICAO, name, country, city).
 AIRPORTS = [
