@@ -15,7 +15,7 @@ OPENSKY_TOKEN_URL = (
 )
 OPENSKY_API_BASE_URL = "https://opensky-network.org/api"
 
-LOOKBACK_DAYS = float(os.environ.get("LOOKBACK_DAYS", "2"))
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "1"))
 # OpenSky caps queries by UTC day-partitions touched, not call duration.
 MAX_DAY_PARTITIONS_PER_CHUNK = 2
 

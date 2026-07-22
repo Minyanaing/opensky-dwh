@@ -28,15 +28,65 @@ CREATE TABLE IF NOT EXISTS opensky_raw.bronze.flights_raw (
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 
--- Append-only-if-new; _loaded_at marks the first-seen batch.
+-- adsbdb.com enrichment landing tables - columns match ingest_adsbdb.py's CALLSIGN_COLUMNS.
 CREATE TABLE IF NOT EXISTS opensky_raw.bronze.callsigns (
+    `callsign` STRING,
+    `found` BOOLEAN,
+    `callsign_icao` STRING,
+    `callsign_iata` STRING,
+    `airline_icao` STRING,
+    `airline_iata` STRING,
+    `airline_name` STRING,
+    `airline_country` STRING,
+    `airline_callsign` STRING,
+    `origin_icao` STRING,
+    `origin_iata` STRING,
+    `origin_name` STRING,
+    `origin_country` STRING,
+    `origin_lat` DOUBLE,
+    `origin_lon` DOUBLE,
+    `destination_icao` STRING,
+    `destination_iata` STRING,
+    `destination_name` STRING,
+    `destination_country` STRING,
+    `destination_lat` DOUBLE,
+    `destination_lon` DOUBLE,
+    `fetched_at` STRING,
+    `_loaded_at` TIMESTAMP
+) USING DELTA;
+
+-- Matches ingest_adsbdb.py's AIRLINE_COLUMNS - derived from callsigns, not a separate API call.
+CREATE TABLE IF NOT EXISTS opensky_raw.bronze.airlines (
+    `icao` STRING,
+    `iata` STRING,
+    `name` STRING,
+    `country` STRING,
     `callsign` STRING,
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 
--- Same append-only-if-new behavior as callsigns.
+-- Matches ingest_adsbdb.py's AIRPORT_COLUMNS - derived from callsigns, not a separate API call.
 CREATE TABLE IF NOT EXISTS opensky_raw.bronze.airports (
     `icao` STRING,
+    `iata` STRING,
+    `name` STRING,
+    `country` STRING,
+    `lat` DOUBLE,
+    `lon` DOUBLE,
+    `_loaded_at` TIMESTAMP
+) USING DELTA;
+
+-- Matches ingest_adsbdb.py's AIRCRAFT_COLUMNS - only populated via ingest_adsbdb.py --aircraft.
+CREATE TABLE IF NOT EXISTS opensky_raw.bronze.aircrafts (
+    `icao24` STRING,
+    `found` BOOLEAN,
+    `type` STRING,
+    `icao_type` STRING,
+    `manufacturer` STRING,
+    `registration` STRING,
+    `registered_owner` STRING,
+    `registered_owner_country` STRING,
+    `fetched_at` STRING,
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 

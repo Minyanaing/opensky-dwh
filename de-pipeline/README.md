@@ -1,186 +1,116 @@
 # de-pipeline
 
-Implements the plan in `.claude/databricks-opensky-de-pipeline-project-plan.md`. **Built today:** ingestion (Step 2), Databricks landing setup (Step 1), and both GitHub Actions workflows (`infra-deploy.yml`, `de-ingest.yml`). dbt, orchestration, and promotion (Step 4 onward) are still just the plan document.
-
----
-
 ## 1. Databricks landing setup (one-time)
 
-Creates `opensky_raw.bronze` (catalog + schema + the three tables ingestion writes into) and is what makes `infra-deploy.yml` work. Do this before anything else.
+Creates `opensky_raw.bronze` (catalog + schema + tables + volume).
 
-### 1a. Create the service principal
+1. **Service principal:** Workspace → Settings → Identity and access → Service principals → Add. Note its **Application ID** (`DATABRICKS_CLIENT_ID`), generate an OAuth secret.
+2. **Grants** (needs a metastore admin):
+   ```sql
+   GRANT CREATE CATALOG ON METASTORE TO `<application-id>`;
+   ```
+   Plus `CAN_USE` on the SQL Warehouse (Warehouse → Permissions tab, UI picker is fine there).
+   > `PRINCIPAL_DOES_NOT_EXIST`? Use the Application ID (UUID), not the display name.
+3. **Connection details:** any SQL Warehouse → Connection details → `Server hostname` (`DATABRICKS_HOST`) + `HTTP path` (`DATABRICKS_HTTP_PATH`).
+4. **Test locally:**
+   ```
+   cd de-pipeline/databricks
+   python -m venv .venv && .venv\Scripts\activate
+   pip install -r requirements.txt
+   copy .env.example .env
+   ```
+   Fill in `.env` (`DATABRICKS_HOST/HTTP_PATH/CLIENT_ID/CLIENT_SECRET`, or `DATABRICKS_TOKEN` for PAT fallback; optionally `ADMIN_PRINCIPAL` = your login email, so you can see the catalog too — see below). Then:
+   ```
+   python databricks_setup.py
+   ```
+   Verify in Catalog Explorer: `opensky_raw.bronze` with `flights_raw`/`callsigns`/`airports` + a `landing` volume. Safe to re-run (idempotent).
 
-In your Databricks workspace: **Settings → Identity and access → Service principals → Add service principal.** Name it e.g. `opensky_deploy_sp`, then open it and note its **Application ID** (a UUID, shown on its details page — this is the same value you'll use as `DATABRICKS_CLIENT_ID`), then generate an **OAuth secret** — the **Client Secret** is shown only once.
+   > **Why `ADMIN_PRINCIPAL`:** the service principal *owns* what it creates, so your own admin login can't see `opensky_raw` unless it's the true metastore admin or explicitly granted. Set `ADMIN_PRINCIPAL` and `setup.sql` grants you access automatically every run.
 
-### 1b. Grant it what it needs
-
-Two grants, both one-time, both need an account/metastore admin (if you're the only user on your Free Edition account, that's you):
-
-- **`CREATE CATALOG` on the metastore** — the actual unlock; without it, `databricks_setup.py`'s first statement fails. In a SQL editor/notebook logged in as an admin, use the **Application ID**, not the display name:
-  ```sql
-  GRANT CREATE CATALOG ON METASTORE TO `<application-id>`;
-  ```
-  > **`PRINCIPAL_DOES_NOT_EXIST`?** Unity Catalog's `GRANT ... TO` only recognizes service principals by their Application ID (a UUID) — the display name you gave it in step 1a (e.g. `opensky_deploy_sp` or `deploy_sp`) isn't a valid reference here and will always produce this error. Copy the Application ID from the service principal's details page instead.
-- **`CAN_USE` on the SQL Warehouse** — via the warehouse's **Permissions** tab in the UI, add the service principal (searchable by display name here — the UI picker is fine, it's only raw SQL `GRANT` that requires the Application ID) with **Can Use**.
-
-### 1c. Get the SQL Warehouse connection details
-
-Any SQL Warehouse → **Connection details** tab → copy **Server hostname** (this is `DATABRICKS_HOST`, no `https://` prefix) and **HTTP path** (`DATABRICKS_HTTP_PATH`).
-
-### 1d. Test it locally first
-
-```
-cd de-pipeline/databricks
-python -m venv .venv
-.venv\Scripts\activate      # Windows
-pip install -r requirements.txt
-copy .env.example .env
-```
-
-Fill in `.env`: `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` (or just `DATABRICKS_TOKEN` if you're using the PAT fallback instead). Also set `ADMIN_PRINCIPAL` to your own account's login email — see the callout below for why. Then:
-
-```
-python databricks_setup.py
-```
-
-Success looks like log lines for each DDL statement (5, or 6 if `ADMIN_PRINCIPAL` is set), ending in `Databricks landing setup complete`. Verify in **Catalog Explorer**: `opensky_raw` → `bronze` → `flights_raw` / `callsigns` / `airports` should all exist (empty is fine, they've just been created). Safe to re-run any time — every statement is `IF NOT EXISTS` (or a plain re-grant, for the `ADMIN_PRINCIPAL` one).
-
-> **Why `ADMIN_PRINCIPAL` matters, and what happens if you skip it:** the service principal that runs this script *owns* everything it creates (Unity Catalog's ownership-by-creation model — see the plan's Key design decisions). That means **your own admin login won't be able to see `opensky_raw` in Catalog Explorer** unless it's either the true metastore admin (different from, and easily confused with, being a *workspace* admin — this exact confusion is how the catalog went briefly invisible during initial setup) or has been explicitly granted access. Setting `ADMIN_PRINCIPAL` to your email makes `setup.sql`'s last statement grant you `USE CATALOG`/`USE SCHEMA`/`SELECT` automatically, every run — no manual one-off `GRANT` needed. Leave it unset and that statement is skipped entirely; you'll still be able to run everything via the service principal, you just won't be able to browse the catalog yourself without a separate manual grant.
-
-### 1e. Test it via CI/CD (`infra-deploy.yml`)
-
-This is what actually needs to work end-to-end before ingestion can land anywhere.
-
-1. **Add the GitHub secrets** — repo → Settings → Secrets and variables → Actions → New repository secret: `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` (same values as your local `.env`).
-2. **Trigger it** — the workflow runs automatically on a push to `main` touching `de-pipeline/databricks/**`, or on demand: GitHub repo → **Actions** → **Databricks infra deploy** → **Run workflow**. (Or from the CLI: `gh workflow run infra-deploy.yml`.)
-3. **Check the run** — the one job (`deploy`) should go green; its log should show the same 5-statement output as the local run.
-4. **Verify the result** — same as 1d: Catalog Explorer should show `opensky_raw.bronze` with all three tables. If this is the very first run, this is also the first time the catalog itself gets created — you're watching CI/CD stand up real Databricks infrastructure from nothing.
-
-If step 3 fails on the very first statement (`CREATE CATALOG`), the metastore-level grant from 1b almost certainly didn't take — that's the most common failure mode here, not a bug in the script.
+5. **Test via CI/CD:** add the same secrets to GitHub (repo → Settings → Secrets → Actions), then run `infra-deploy.yml` (auto on push to `main` touching `de-pipeline/databricks/**`, or manual dispatch). If it fails on `CREATE CATALOG`, the metastore grant from step 2 didn't take.
 
 ---
 
 ## 2. Ingestion setup (local)
 
-1. **Register an OpenSky OAuth2 client** at [opensky-network.org/my-opensky](https://opensky-network.org/my-opensky) → API Client, to get the standard 4,000-credits/day tier (anonymous access is not enough for this pipeline's scope).
-
-2. **Create a virtual environment and install dependencies:**
-
-   ```
+1. Register an OpenSky OAuth2 client at [opensky-network.org/my-opensky](https://opensky-network.org/my-opensky) (4,000 credits/day tier).
+2. ```
    cd de-pipeline/ingestion
-   python -m venv .venv
-   .venv\Scripts\activate      # Windows
+   python -m venv .venv && .venv\Scripts\activate
    pip install -r requirements.txt
-   ```
-
-3. **Configure credentials:**
-
-   ```
    copy .env.example .env
    ```
-
-   Fill in `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`. If you'll test `INGEST_MODE=databricks` (below), also fill in the same `DATABRICKS_*` values from Step 1.
+3. Fill in `.env`: `OPENSKY_CLIENT_ID`/`SECRET` + the `DATABRICKS_*` values from Step 1 (needed for the upload step).
 
 ## 3. Running ingestion locally
 
-Two modes, controlled by `INGEST_MODE` in `.env` (or the environment):
+Always local CSV first — nothing talks to Databricks except the upload step.
 
-### Local mode (default, `INGEST_MODE` unset or `""`)
-
-Writes three files to `data/` (gitignored), **overwriting the previous run's output** — no Databricks connection needed at all:
-
+**Fetch from OpenSky:**
 ```
-# Quick smoke test - one airport, last 1 day
-python ingest_opensky.py --airports WSSS --lookback-days 1
-
-# Full run - all 85 curated airports, default 3-day window
-python ingest_opensky.py
+python ingest_opensky.py --airports WSSS --lookback-days 1   # quick test
+python ingest_opensky.py                                     # full run, default lookback 1 day (yesterday)
 ```
+Writes `flights_raw.csv` (full export), `callsigns.csv`/`airports.csv` (new-only since last run, tracked via `callsigns_old.csv`/`airports_old.csv`). Partial API-limit failures still export what was fetched.
 
-| File | Contents |
-|---|---|
-| `flights_raw.json` | Raw OpenSky `Flight` records (arrivals + departures), tagged with `queried_airport`, `movement_type`, `fetched_at` |
-| `callsigns.csv` | Distinct, whitespace-stripped callsigns seen in that run |
-| `airports.csv` | Distinct ICAO airport codes seen — both ends of every flight, so this includes foreign counterpart airports outside the curated 85 |
-
-A previous local run's files can be (re)loaded into Databricks separately: `python load_to_databricks.py`.
-
-### Databricks mode (`INGEST_MODE=databricks`)
-
-Skips the local files entirely and lands the same data straight into `opensky_raw.bronze` (needs the `DATABRICKS_*` vars from Step 1 in `.env`):
-
+**Enrich via adsbdb.com:**
 ```
-set INGEST_MODE=databricks          # Windows (cmd)
-python ingest_opensky.py --airports WSSS --lookback-days 1
+python ingest_adsbdb.py              # callsigns + airlines + airports (default)
+python ingest_adsbdb.py --aircraft   # aircraft only, run manually as needed
+python ingest_adsbdb.py --limit 10   # cap items, for a quick test
 ```
+See Section 4 for output files.
 
-`flights_raw` is appended to unconditionally (it's an event log). `callsigns`/`airports` are **append-only-if-new** — each run queries what's already there and only inserts genuinely new values, stamped with that run's `_loaded_at`. Re-running the same window twice should insert flight rows both times but zero new callsigns/airports the second time — that's the expected behavior, not a bug.
+**Upload to the Databricks landing Volume:**
+```
+python load_to_databricks.py flight_raw airlines airports callsigns
+```
+Uploads named CSV(s) to `/Volumes/opensky_raw/bronze/landing/<folder>/`. Missing files are skipped with a warning. Loading a Volume file into its table (`COPY INTO`) is manual today — see the plan doc.
 
 ## 4. Manual-test utilities
 
-### One aircraft's flight history
-
+**One aircraft's history:**
 ```
 python fetch_aircraft_history.py --icao24 7823bc --lookback-days 3
 ```
-
 Writes `data/aircraft_flights_<icao24>_<timestamp>.json`.
 
-### Airline / aircraft / callsign enrichment (adsbdb.com)
+**adsbdb enrichment** (`ingest_adsbdb.py`, community data — `found=False` is normal, not a bug):
 
-`ingest_adsbdb.py` reads directly from Databricks — **only the latest discovery batch** (`MAX(_loaded_at)`) from the `callsigns` and `flights_raw` tables — and enriches it via the free, keyless [adsbdb.com](https://www.adsbdb.com/) API. Needs the same `DATABRICKS_*` vars as Step 1/3, and only makes sense to run after at least one `INGEST_MODE=databricks` ingest:
+| File | Written by | Contents |
+|---|---|---|
+| `adsbdb_callsigns.csv` | default | route, airline, origin/destination airport (+ lat/lon) |
+| `adsbdb_airlines.csv` | default | distinct airlines, derived from the callsigns above |
+| `adsbdb_airports.csv` | default | distinct airports, derived from the callsigns above |
+| `adsbdb_aircraft.csv` | `--aircraft` | type, manufacturer, registration, owner |
 
-```
-python ingest_adsbdb.py
-```
-
-Writes three files to `data/`, overwritten each run:
-
-| File | Contents |
-|---|---|
-| `adsbdb_callsigns.json` | Per-callsign route lookup (`/callsign/{callsign}`) — origin/destination airport + embedded airline, or `found: false` if adsbdb doesn't have it |
-| `adsbdb_aircraft.json` | Per-`icao24` aircraft lookup (`/aircraft/{mode_s}`) — type, manufacturer, registration, owner |
-| `adsbdb_airlines.json` | Per-airline lookup (`/airline/{icao}`), for ICAO airline codes derived from callsign prefixes (e.g. `CSZ` from `CSZ306`) |
-
-Because callsigns/airports are append-only-if-new, most runs process a small "what's new" batch rather than the full history — `MAX_LOCAL_TEST_ITEMS` (20) is a safety cap for an unusually large batch, not the everyday throttle. adsbdb is community-maintained, not authoritative — expect `found: false` sometimes, that's normal. It has no airport-lookup endpoint, so the `airports` table is read (for visibility in the logs) but never queried against adsbdb.
+No separate airline/airport API calls — both are derived from the callsign route response. A `400` (invalid identifier) is logged and skipped like a `404`.
 
 ## 5. GitHub Actions (CI/CD)
 
-| Workflow | Trigger | What it does |
+| Workflow | Trigger | Status |
 |---|---|---|
-| `infra-deploy.yml` | push to `main` touching `de-pipeline/databricks/**`, or manual dispatch | Runs `databricks_setup.py` — see Section 1e to test it |
-| `de-ingest.yml` | manual dispatch (`lookback_days` input), or `repository_dispatch` type `de-ingest` | **Currently can't succeed** — OpenSky's origin appears to block GitHub-hosted runner IPs (see the workflow file's header comment). Kept in the repo for later (self-hosted runner, etc.); run ingestion locally for now — Section 6 |
+| `infra-deploy.yml` | push to `main` (`de-pipeline/databricks/**`), or manual | **Working** — Section 1 |
+| `de-ingest.yml` | manual / `repository_dispatch` | **Stale, doesn't work** — OpenSky blocks GitHub Actions IPs; also out of date vs. the current scripts. Kept for reference only. |
 
-**Secrets needed** (repo → Settings → Secrets and variables → Actions):
+**Secrets:** `DATABRICKS_HOST`/`HTTP_PATH`/`CLIENT_ID`/`CLIENT_SECRET` (or `DATABRICKS_TOKEN`), `ADMIN_PRINCIPAL` (optional) — all for `infra-deploy.yml` only. `OPENSKY_*` creds live in local `.env` only.
 
-| Secret | Used by |
-|---|---|
-| `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH` | both workflows |
-| `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET` | both workflows |
-| `DATABRICKS_TOKEN` | fallback, instead of the two above |
-| `ADMIN_PRINCIPAL` | `infra-deploy.yml` (optional — see Section 1d) |
-| `OPENSKY_CLIENT_ID`, `OPENSKY_CLIENT_SECRET` | `de-ingest.yml` |
+## 6. Running ingestion daily (local)
 
-## 6. Running ingestion daily (local, since GitHub Actions can't reach OpenSky)
+GitHub Actions can't reach OpenSky (IP-blocked) and Databricks compute can't either (network policy) — so daily ingestion runs on a machine you control.
 
-`de-ingest.yml` is kept in the repo but currently can't succeed on GitHub-hosted runners: OpenSky's origin server (`auth.opensky-network.org` and `opensky-network.org` both resolve to the same non-CDN IP) times out at the raw TCP level on every `ubuntu-latest` run, while working fine locally — the signature of the origin blocking/dropping traffic from GitHub Actions' known IP ranges, not a code bug (see the workflow file's header comment for the full diagnosis). Databricks Free Edition compute can't reach OpenSky either (its own outbound-network policy), so daily ingestion has to run from a machine you control, for now.
+**`run_daily.bat`** runs, in sequence, logging to `ingest_daily.log`:
+1. `ingest_opensky.py`
+2. `ingest_adsbdb.py` (default mode)
+3. `load_to_databricks.py flight_raw airlines airports callsigns`
 
-**`run_daily.bat`** (in `de-pipeline/ingestion/`) does this: activates the local venv, sets `INGEST_MODE=databricks`, runs `ingest_opensky.py`, and appends output to `ingest_daily.log` (gitignored).
+(`--aircraft` / `aircrafts` are manual, not part of this daily run.)
 
-**Windows Task Scheduler setup:**
+**Task Scheduler:** Create Basic Task → Trigger: Daily → Action: Start a program → path to `run_daily.bat` (leave "Start in" blank). Run once to test, check `ingest_daily.log`.
 
-1. Complete Section 2/3 first — `.venv` created, `.env` filled in with OpenSky *and* Databricks credentials (`INGEST_MODE=databricks` needs both).
-2. Open **Task Scheduler → Create Basic Task**:
-   - Trigger: **Daily**, pick a time.
-   - Action: **Start a program** → Program/script: the full path to `run_daily.bat` (e.g. `C:\...\de-pipeline\ingestion\run_daily.bat`). Leave "Start in" blank — the script sets its own working directory via `%~dp0`.
-3. Right-click the task → **Run** to test it once immediately, then check `ingest_daily.log` for the same success output you'd see running it by hand.
-
-Ingestion is stateless (no watermark) and idempotent, so a missed day (machine off, asleep, etc.) is harmless — the next successful run's trailing window covers it.
-
-If this ever becomes viable on GitHub Actions again (a self-hosted runner, OpenSky allowlisting your account, etc.), `de-ingest.yml` is already fully wired — just point cron-job.org or a schedule at it the same way `infra-deploy.yml` is triggered.
+> With the default `lookback_days=1`, a missed day is **not** auto-backfilled — re-run manually with a wider `--lookback-days` to catch up.
 
 ## Notes
 
-- The curated airport list (all 85 designated international airports across Southeast Asia) lives in `ingestion/config.py`.
-- Ingestion's *window* is stateless: every run re-fetches the full trailing window rather than tracking a watermark, so a repeated or manual run is always safe to re-run. `callsigns`/`airports` landing is the one place that *is* stateful (append-only-if-new).
-- `--airports` accepts a comma-separated ICAO subset, for testing without pulling the full list.
+- Curated airport list (85 SEA international airports) lives in `ingestion/config.py`.
+- `--airports` takes a comma-separated ICAO subset for a quick test; `ingest_adsbdb.py --limit N` is the equivalent for enrichment.

@@ -1,20 +1,27 @@
-"""Enrich the newest batch of callsigns/aircraft with airline/aircraft/route details from the
-free, keyless adsbdb.com API - community-maintained, not authoritative. Reads the latest
-discovery batch (MAX(_loaded_at)) from opensky_raw.bronze's callsigns/flights_raw tables, not
-local files; writes local JSON output (adsbdb has no airport-lookup endpoint, so airports are
-read but not queried)."""
+"""Enrich the exported callsigns/aircraft with airline/aircraft/route details from the free,
+keyless adsbdb.com API - community-maintained, not authoritative.
+
+Two independent modes, never both in one run:
+- Default: data/callsigns.csv -> GET /callsign/{callsign} for every distinct callsign (no cap).
+  adsbdb has no separate airline or airport lookup endpoint, so those aren't queried directly -
+  each callsign route response already embeds its airline and origin/destination airport, and
+  adsbdb_airlines.csv / adsbdb_airports.csv are derived from that same callsign data (deduped by
+  icao). Writes adsbdb_callsigns.csv, adsbdb_airlines.csv, adsbdb_airports.csv.
+- --aircraft: data/flights_raw.csv -> distinct icao24 -> GET /aircraft/{mode_s}. Writes only
+  adsbdb_aircraft.csv.
+
+Output is flat CSV - only the fields useful downstream, not the full nested API response.
+"""
 
 import argparse
-import json
+import csv
 import logging
-import re
 import time
 from pathlib import Path
 
 import requests
 
 import config
-from load_to_databricks import CATALOG, SCHEMA, get_connection
 from transforms import utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -26,16 +33,52 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 5
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
-# Safety cap for an unusually large batch, not the everyday throttle it used to be.
-MAX_LOCAL_TEST_ITEMS = 20
+CALLSIGN_COLUMNS = [
+    "callsign",
+    "found",
+    "callsign_icao",
+    "callsign_iata",
+    "airline_icao",
+    "airline_iata",
+    "airline_name",
+    "airline_country",
+    "airline_callsign",
+    "origin_icao",
+    "origin_iata",
+    "origin_name",
+    "origin_country",
+    "origin_lat",
+    "origin_lon",
+    "destination_icao",
+    "destination_iata",
+    "destination_name",
+    "destination_country",
+    "destination_lat",
+    "destination_lon",
+    "fetched_at",
+]
 
-# ICAO callsign convention: 3 letters + digits. Skips GA tail-number-style callsigns.
-_AIRLINE_PREFIX_RE = re.compile(r"^([A-Z]{3})\d")
+AIRLINE_COLUMNS = ["icao", "iata", "name", "country", "callsign"]
+
+AIRPORT_COLUMNS = ["icao", "iata", "name", "country", "lat", "lon"]
+
+AIRCRAFT_COLUMNS = [
+    "icao24",
+    "found",
+    "type",
+    "icao_type",
+    "manufacturer",
+    "registration",
+    "registered_owner",
+    "registered_owner_country",
+    "fetched_at",
+]
 
 
 def _get(path):
     """GET one adsbdb endpoint, unwrapped from its {"response": ...} envelope.
-    None on 404 (not found, not an error)."""
+    None on 404 (not found) or 400 (invalid identifier, e.g. a non-ICAO callsign) - both are
+    skippable, not errors."""
     url = f"{ADSBDB_BASE_URL}{path}"
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -46,6 +89,10 @@ def _get(path):
             continue
 
         if response.status_code == 404:
+            return None
+
+        if response.status_code == 400:
+            logger.warning("Skipping %s - invalid identifier: %s", path, response.text[:200])
             return None
 
         if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
@@ -70,23 +117,95 @@ def _get(path):
     raise RuntimeError(f"Exhausted retries calling {path}")
 
 
-def _latest_batch(cursor, table, column):
-    """Distinct values from the table's most recent _loaded_at batch only."""
-    cursor.execute(
-        f"SELECT DISTINCT `{column}` FROM {CATALOG}.{SCHEMA}.{table} "
-        f"WHERE `_loaded_at` = (SELECT MAX(`_loaded_at`) FROM {CATALOG}.{SCHEMA}.{table})"
-    )
-    return sorted({row[0] for row in cursor.fetchall() if row[0]})
+def _read_column(path, column):
+    path = Path(path)
+    if not path.is_file():
+        logger.warning("%s not found, treating as empty", path)
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return sorted({row[column] for row in csv.DictReader(f) if row.get(column)})
 
 
-def derive_airline_codes(callsigns):
-    """Distinct ICAO airline designators from callsign prefixes."""
-    codes = set()
-    for callsign in callsigns:
-        match = _AIRLINE_PREFIX_RE.match(callsign.strip().upper())
-        if match:
-            codes.add(match.group(1))
-    return sorted(codes)
+def _flatten_callsign(callsign, flightroute, fetched_at):
+    airline = (flightroute or {}).get("airline") or {}
+    origin = (flightroute or {}).get("origin") or {}
+    destination = (flightroute or {}).get("destination") or {}
+    return {
+        "callsign": callsign,
+        "found": flightroute is not None,
+        "callsign_icao": (flightroute or {}).get("callsign_icao", ""),
+        "callsign_iata": (flightroute or {}).get("callsign_iata", ""),
+        "airline_icao": airline.get("icao", ""),
+        "airline_iata": airline.get("iata", ""),
+        "airline_name": airline.get("name", ""),
+        "airline_country": airline.get("country", ""),
+        "airline_callsign": airline.get("callsign", ""),
+        "origin_icao": origin.get("icao_code", ""),
+        "origin_iata": origin.get("iata_code", ""),
+        "origin_name": origin.get("name", ""),
+        "origin_country": origin.get("country_name", ""),
+        "origin_lat": origin.get("latitude", ""),
+        "origin_lon": origin.get("longitude", ""),
+        "destination_icao": destination.get("icao_code", ""),
+        "destination_iata": destination.get("iata_code", ""),
+        "destination_name": destination.get("name", ""),
+        "destination_country": destination.get("country_name", ""),
+        "destination_lat": destination.get("latitude", ""),
+        "destination_lon": destination.get("longitude", ""),
+        "fetched_at": fetched_at,
+    }
+
+
+def _flatten_aircraft(icao24, aircraft, fetched_at):
+    aircraft = aircraft or {}
+    return {
+        "icao24": icao24,
+        "found": bool(aircraft),
+        "type": aircraft.get("type", ""),
+        "icao_type": aircraft.get("icao_type", ""),
+        "manufacturer": aircraft.get("manufacturer", ""),
+        "registration": aircraft.get("registration", ""),
+        "registered_owner": aircraft.get("registered_owner", ""),
+        "registered_owner_country": aircraft.get("registered_owner_country_name", ""),
+        "fetched_at": fetched_at,
+    }
+
+
+def _derive_airlines(callsign_rows):
+    """Distinct airlines embedded in the callsign route results - no separate API call."""
+    seen = {}
+    for row in callsign_rows:
+        icao = row.get("airline_icao")
+        if not icao or icao in seen:
+            continue
+        seen[icao] = {
+            "icao": icao,
+            "iata": row.get("airline_iata", ""),
+            "name": row.get("airline_name", ""),
+            "country": row.get("airline_country", ""),
+            "callsign": row.get("airline_callsign", ""),
+        }
+    return [seen[icao] for icao in sorted(seen)]
+
+
+def _derive_airports(callsign_rows):
+    """Distinct airports (both origin and destination) embedded in the callsign route results -
+    adsbdb has no airport-lookup endpoint, so this is the only way to get airport details from it."""
+    seen = {}
+    for row in callsign_rows:
+        for prefix in ("origin", "destination"):
+            icao = row.get(f"{prefix}_icao")
+            if not icao or icao in seen:
+                continue
+            seen[icao] = {
+                "icao": icao,
+                "iata": row.get(f"{prefix}_iata", ""),
+                "name": row.get(f"{prefix}_name", ""),
+                "country": row.get(f"{prefix}_country", ""),
+                "lat": row.get(f"{prefix}_lat", ""),
+                "lon": row.get(f"{prefix}_lon", ""),
+            }
+    return [seen[icao] for icao in sorted(seen)]
 
 
 def fetch_callsign_routes(callsigns):
@@ -94,14 +213,7 @@ def fetch_callsign_routes(callsigns):
     for callsign in callsigns:
         payload = _get(f"/callsign/{callsign}")
         flightroute = (payload or {}).get("flightroute") if payload else None
-        results.append(
-            {
-                "callsign": callsign,
-                "found": flightroute is not None,
-                "flightroute": flightroute,
-                "fetched_at": utc_now_iso(),
-            }
-        )
+        results.append(_flatten_callsign(callsign, flightroute, utc_now_iso()))
         logger.info("callsign %-10s -> %s", callsign, "found" if flightroute else "not found")
         time.sleep(REQUEST_PACING_SECONDS)
     return results
@@ -112,116 +224,119 @@ def fetch_aircraft_details(icao24_list):
     for icao24 in icao24_list:
         payload = _get(f"/aircraft/{icao24}")
         aircraft = (payload or {}).get("aircraft") if payload else None
-        results.append(
-            {
-                "icao24": icao24,
-                "found": aircraft is not None,
-                "aircraft": aircraft,
-                "fetched_at": utc_now_iso(),
-            }
-        )
+        results.append(_flatten_aircraft(icao24, aircraft, utc_now_iso()))
         logger.info("aircraft %-8s -> %s", icao24, "found" if aircraft else "not found")
         time.sleep(REQUEST_PACING_SECONDS)
     return results
 
 
-def fetch_airlines(airline_codes):
-    results = []
-    for code in airline_codes:
-        payload = _get(f"/airline/{code}")  # a list of airline objects, or None if unknown
-        results.append(
-            {
-                "airline_code": code,
-                "found": bool(payload),
-                "airlines": payload or [],
-                "fetched_at": utc_now_iso(),
-            }
-        )
-        logger.info("airline %-6s -> %s", code, "found" if payload else "not found")
-        time.sleep(REQUEST_PACING_SECONDS)
-    return results
-
-
-def _cap(items, label):
-    if len(items) > MAX_LOCAL_TEST_ITEMS:
-        logger.info(
-            "%s %s in the latest batch, capping this run to the first %s",
-            len(items),
-            label,
-            MAX_LOCAL_TEST_ITEMS,
-        )
-        return items[:MAX_LOCAL_TEST_ITEMS]
-    return items
-
-
-def _write_json(file_path, data):
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+def _write_csv(file_path, fieldnames, rows):
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", restval="")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
 
 
 def parse_args():
+    default_dir = config.OUTPUT_DIR
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--callsigns-csv",
+        type=str,
+        default=str(default_dir / "callsigns.csv"),
+        help="Path to the distinct-callsigns CSV (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--flights-csv",
+        type=str,
+        default=str(default_dir / "flights_raw.csv"),
+        help="Path to the flights CSV, for distinct icao24 values (default: %(default)s)",
+    )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default=str(config.OUTPUT_DIR),
-        help="Directory to write the adsbdb_*.json files to (default: %(default)s)",
+        default=str(default_dir),
+        help="Directory to write the adsbdb_*.csv files to (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--aircraft",
+        action="store_true",
+        help="Fetch aircraft details only (icao24 from --flights-csv). Without this flag, runs "
+        "callsigns/airlines/airports only.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N callsigns (or icao24s, with --aircraft) - for a quick "
+        "local test. Default: no limit, process all.",
     )
     return parser.parse_args()
 
 
-def run(output_dir):
+def _apply_limit(items, limit, label):
+    if limit is not None:
+        logger.info("Limiting to the first %s of %s %s", limit, len(items), label)
+        return items[:limit]
+    return items
+
+
+def run_callsigns_airlines_airports(callsigns_csv_path, output_dir, limit=None):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    connection = get_connection()
-    try:
-        with connection.cursor() as cursor:
-            callsigns = _cap(_latest_batch(cursor, "callsigns", "callsign"), "callsign(s)")
-            icao24_list = _cap(_latest_batch(cursor, "flights_raw", "icao24"), "aircraft icao24 value(s)")
-            airports_batch = _latest_batch(cursor, "airports", "icao")
-    finally:
-        connection.close()
-
-    airline_codes = _cap(derive_airline_codes(callsigns), "derived airline code(s)")
-
-    logger.info(
-        "Latest batch: %s callsign(s), %s aircraft (icao24), %s airport(s) (not queried - "
-        "adsbdb has no airport endpoint), %s derived airline code(s)",
-        len(callsigns),
-        len(icao24_list),
-        len(airports_batch),
-        len(airline_codes),
-    )
+    callsigns = _read_column(callsigns_csv_path, "callsign")
+    callsigns = _apply_limit(callsigns, limit, "callsign(s)")
+    logger.info("%s callsign(s)", len(callsigns))
 
     callsign_results = fetch_callsign_routes(callsigns)
-    callsigns_path = out_dir / "adsbdb_callsigns.json"
-    _write_json(callsigns_path, callsign_results)
+    callsigns_path = out_dir / "adsbdb_callsigns.csv"
+    _write_csv(callsigns_path, CALLSIGN_COLUMNS, callsign_results)
 
-    aircraft_results = fetch_aircraft_details(icao24_list)
-    aircraft_path = out_dir / "adsbdb_aircraft.json"
-    _write_json(aircraft_path, aircraft_results)
+    airline_rows = _derive_airlines(callsign_results)
+    airlines_path = out_dir / "adsbdb_airlines.csv"
+    _write_csv(airlines_path, AIRLINE_COLUMNS, airline_rows)
 
-    airline_results = fetch_airlines(airline_codes)
-    airlines_path = out_dir / "adsbdb_airlines.json"
-    _write_json(airlines_path, airline_results)
+    airport_rows = _derive_airports(callsign_results)
+    airports_path = out_dir / "adsbdb_airports.csv"
+    _write_csv(airports_path, AIRPORT_COLUMNS, airport_rows)
 
     logger.info(
-        "Wrote %s callsign route(s) -> %s | %s aircraft record(s) -> %s | %s airline record(s) -> %s",
+        "Wrote %s callsign route(s) -> %s | %s airline(s) -> %s | %s airport(s) -> %s",
         len(callsign_results),
         callsigns_path,
-        len(aircraft_results),
-        aircraft_path,
-        len(airline_results),
+        len(airline_rows),
         airlines_path,
+        len(airport_rows),
+        airports_path,
     )
-    return {"callsigns": callsigns_path, "aircraft": aircraft_path, "airlines": airlines_path}
+    return {"callsigns": callsigns_path, "airlines": airlines_path, "airports": airports_path}
+
+
+def run_aircraft(flights_csv_path, output_dir, limit=None):
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    icao24_list = _read_column(flights_csv_path, "icao24")
+    icao24_list = _apply_limit(icao24_list, limit, "aircraft (icao24)")
+    logger.info("%s aircraft (icao24)", len(icao24_list))
+
+    aircraft_results = fetch_aircraft_details(icao24_list)
+    aircraft_path = out_dir / "adsbdb_aircraft.csv"
+    _write_csv(aircraft_path, AIRCRAFT_COLUMNS, aircraft_results)
+
+    logger.info("Wrote %s aircraft record(s) -> %s", len(aircraft_results), aircraft_path)
+    return {"aircraft": aircraft_path}
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args()
-    run(args.output_dir)
+    if args.aircraft:
+        run_aircraft(args.flights_csv, args.output_dir, limit=args.limit)
+    else:
+        run_callsigns_airlines_airports(args.callsigns_csv, args.output_dir, limit=args.limit)
 
 
 if __name__ == "__main__":
