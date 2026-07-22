@@ -1,7 +1,9 @@
-"""Applies setup.sql (Unity Catalog landing objects) over a Databricks SQL Warehouse connection -
-service principal OAuth M2M, or PAT fallback. Also what infra-deploy.yml runs on merge to main.
-See README.md for one-time setup (service principal, CREATE CATALOG grant, warehouse CAN_USE)."""
+"""Applies a given SQL file (e.g. setup.sql or destroy.sql) over a Databricks SQL Warehouse
+connection - service principal OAuth M2M, or PAT fallback. --sql-file is required, always
+explicit about what's being run against Databricks - see README.md for one-time setup
+(service principal, CREATE CATALOG grant, warehouse CAN_USE)."""
 
+import argparse
 import logging
 import os
 from pathlib import Path
@@ -13,8 +15,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-SQL_FILE = Path(__file__).parent / "setup.sql"
 
 
 def _require_env(name):
@@ -81,7 +81,7 @@ def _apply_admin_principal(statements):
     return kept
 
 
-def run(sql_file=SQL_FILE):
+def run(sql_file):
     statements = _apply_admin_principal(_statements(sql_file.read_text(encoding="utf-8")))
     logger.info("Applying %s statement(s) from %s", len(statements), sql_file)
 
@@ -94,12 +94,24 @@ def run(sql_file=SQL_FILE):
     finally:
         connection.close()
 
-    logger.info("Databricks landing setup complete: opensky_raw.bronze (flights_raw, callsigns, airports)")
+    logger.info("Finished applying %s", sql_file.name)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--sql-file",
+        type=str,
+        required=True,
+        help="SQL file to apply, e.g. setup.sql or destroy.sql",
+    )
+    return parser.parse_args()
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    run()
+    args = parse_args()
+    run(Path(args.sql_file))
 
 
 if __name__ == "__main__":

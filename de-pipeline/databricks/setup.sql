@@ -91,4 +91,6 @@ CREATE TABLE IF NOT EXISTS opensky_raw.bronze.aircrafts (
 ) USING DELTA;
 
 -- Optional: full access for a human account. Skipped if ADMIN_PRINCIPAL is unset.
-GRANT ALL PRIVILEGES ON CATALOG opensky_raw TO {{ADMIN_PRINCIPAL}};
+-- MANAGE is listed separately - ALL PRIVILEGES deliberately excludes it (anti-privilege-escalation),
+-- but without it ADMIN_PRINCIPAL can't DROP/ALTER tables it doesn't own.
+GRANT ALL PRIVILEGES, MANAGE ON CATALOG opensky_raw TO {{ADMIN_PRINCIPAL}};

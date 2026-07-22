@@ -30,4 +30,4 @@ jobs:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
           ADMIN_PRINCIPAL: ${{ secrets.ADMIN_PRINCIPAL }}
-        run: python databricks_setup.py
+        run: python databricks_setup.py --sql-file setup.sql
