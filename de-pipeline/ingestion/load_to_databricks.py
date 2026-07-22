@@ -1,8 +1,8 @@
 """Uploads local CSV exports to the opensky_raw.bronze.landing Unity Catalog Volume, one
 sub-folder per dataset. Which dataset(s) to upload is required on the command line:
 
-  python load_to_databricks.py flight_raw airlines airports callsigns aircrafts
-  python load_to_databricks.py flight_raw callsigns   # just these two
+  python load_to_databricks.py flights_raw airlines airports callsigns aircrafts
+  python load_to_databricks.py flights_raw callsigns   # just these two
 
 Dataset name -> (local file, volume folder):
   flights_raw -> flights_raw.csv       -> flights_raw/

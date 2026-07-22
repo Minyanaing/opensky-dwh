@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "de-pipeline/databricks/**"
+      - "de-pipeline/databricks/setup/**"
   workflow_dispatch: {}
 
 jobs:
-  deploy:
+  databricks-deploy:
     runs-on: ubuntu-latest
     environment: infra
     steps:
@@ -23,7 +23,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Apply Databricks landing setup (opensky_raw.bronze)
-        working-directory: de-pipeline/databricks
+        working-directory: de-pipeline/databricks/setup
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}

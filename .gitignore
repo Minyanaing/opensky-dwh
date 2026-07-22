@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.keys/
 
 # Ingestion local secrets & output
 de-pipeline/ingestion/.env
