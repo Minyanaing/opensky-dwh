@@ -1,0 +1,34 @@
+name: Snowflake infra deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "de-pipeline/snowflake/setup/**"
+  workflow_dispatch: {}
+
+jobs:
+  snowflake-deploy:
+    runs-on: ubuntu-latest
+    environment: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/snowflake
+        run: pip install -r requirements.txt
+
+      - name: Apply Snowflake landing setup (OPENSKY_DB.BRONZE)
+        working-directory: de-pipeline/snowflake/setup
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_DEV_SVC_USER: ${{ secrets.SNOWFLAKE_DEV_SVC_USER }}
+          SNOWFLAKE_DEV_SVC_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_DEV_SVC_PRIVATE_KEY }}
+          SNOWFLAKE_DEV_SVC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_DEV_SVC_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        run: python snowflake_setup.py setup.sql
