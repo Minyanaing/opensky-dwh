@@ -21,9 +21,9 @@ Creates `opensky_raw.bronze` (catalog + schema + tables + volume).
    ```
    Fill in `.env` (`DATABRICKS_HOST/HTTP_PATH/CLIENT_ID/CLIENT_SECRET`, or `DATABRICKS_TOKEN` for PAT fallback; optionally `ADMIN_PRINCIPAL` = your login email, so you can see the catalog too — see below). Then:
    ```
-   python databricks_setup.py
+   python databricks_setup.py --sql-file setup.sql
    ```
-   Verify in Catalog Explorer: `opensky_raw.bronze` with `flights_raw`/`callsigns`/`airports` + a `landing` volume. Safe to re-run (idempotent).
+   Verify in Catalog Explorer: `opensky_raw.bronze` with `flights_raw`/`callsigns`/`airports` + a `landing` volume. Safe to re-run (idempotent). `--sql-file` is required — pass `destroy.sql` instead to tear down just the tables (see `infra-destroy.yml`).
 
    > **Why `ADMIN_PRINCIPAL`:** the service principal *owns* what it creates, so your own admin login can't see `opensky_raw` unless it's the true metastore admin or explicitly granted. Set `ADMIN_PRINCIPAL` and `setup.sql` grants you access automatically every run.
 

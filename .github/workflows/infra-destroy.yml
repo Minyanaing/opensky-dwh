@@ -1,0 +1,41 @@
+name: Databricks infra destroy
+
+# Destructive - drops the opensky_raw catalog and everything in it (schema, tables, volume).
+# workflow_dispatch only, deliberately no push trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'destroy' to confirm - deletes the opensky_raw catalog and everything in it"
+        required: true
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment: infra
+    steps:
+      - name: Check confirmation input
+        if: ${{ github.event.inputs.confirm != 'destroy' }}
+        run: |
+          echo "Confirmation input must be exactly 'destroy' - aborting."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/databricks
+        run: pip install -r requirements.txt
+
+      - name: Destroy Databricks landing setup (opensky_raw)
+        working-directory: de-pipeline/databricks
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python databricks_setup.py --sql-file destroy.sql
