@@ -21,13 +21,22 @@ Creates `opensky_raw.bronze` (catalog + schema + tables + volume).
    ```
    Fill in `.env` (`DATABRICKS_HOST/HTTP_PATH/CLIENT_ID/CLIENT_SECRET`, or `DATABRICKS_TOKEN` for PAT fallback; optionally `ADMIN_PRINCIPAL` = your login email, so you can see the catalog too — see below). Then:
    ```
+   cd setup
    python databricks_setup.py --sql-file setup.sql
    ```
-   Verify in Catalog Explorer: `opensky_raw.bronze` with `flights_raw`/`callsigns`/`airports` + a `landing` volume. Safe to re-run (idempotent). `--sql-file` is required — pass `destroy.sql` instead to tear down just the tables (see `infra-destroy.yml`).
+   (`.env` still resolves correctly one directory up — `--sql-file` just needs to be run from inside `setup/`, since it's a plain relative path.)
+   Verify in Catalog Explorer: `opensky_raw.bronze` with `flights_raw`/`callsigns`/`airlines`/`airports`/`aircrafts` + a `landing` volume. Safe to re-run (idempotent). `--sql-file` is required — pass `destroy.sql` instead to drop just the 5 tables (catalog/schema/volume untouched), or trigger `databricks-infra-destroy.yml` (`workflow_dispatch` only, requires typing `destroy` to confirm).
 
-   > **Why `ADMIN_PRINCIPAL`:** the service principal *owns* what it creates, so your own admin login can't see `opensky_raw` unless it's the true metastore admin or explicitly granted. Set `ADMIN_PRINCIPAL` and `setup.sql` grants you access automatically every run.
+   > **Why `ADMIN_PRINCIPAL`:** the service principal *owns* what it creates, so your own admin login can't see `opensky_raw` unless it's the true metastore admin or explicitly granted. Set `ADMIN_PRINCIPAL` and `setup.sql`'s last statement grants you `ALL PRIVILEGES` + `MANAGE` automatically every run (`MANAGE` has to be listed separately — Unity Catalog's `ALL PRIVILEGES` deliberately excludes it).
 
-5. **Test via CI/CD:** add the same secrets to GitHub (repo → Settings → Secrets → Actions), then run `infra-deploy.yml` (auto on push to `main` touching `de-pipeline/databricks/**`, or manual dispatch). If it fails on `CREATE CATALOG`, the metastore grant from step 2 didn't take.
+5. **Test via CI/CD:** add the same secrets to GitHub (repo → Settings → Secrets → Actions), then run `databricks-infra-deploy.yml` (auto on push to `main` touching `de-pipeline/databricks/**`, or manual dispatch). If it fails on `CREATE CATALOG`, the metastore grant from step 2 didn't take.
+
+6. **Auto-load Volume files into their tables (one-time):**
+   ```
+   cd de-pipeline/databricks/landing
+   python landing.py
+   ```
+   Creates 5 Databricks Jobs (one per table), each with a file-arrival trigger scoped to that table's own Volume folder — landing a file in `callsigns/` only loads `callsigns`, never the other four. Re-run this any time a file under `landing/sql/` changes; it updates the existing Jobs in place rather than duplicating them.
 
 ---
 
@@ -63,9 +72,9 @@ See Section 4 for output files.
 
 **Upload to the Databricks landing Volume:**
 ```
-python load_to_databricks.py flight_raw airlines airports callsigns
+python load_to_databricks.py flights_raw airlines airports callsigns
 ```
-Uploads named CSV(s) to `/Volumes/opensky_raw/bronze/landing/<folder>/`. Missing files are skipped with a warning. Loading a Volume file into its table (`COPY INTO`) is manual today — see the plan doc.
+Uploads named CSV(s) to `/Volumes/opensky_raw/bronze/landing/<folder>/`. Missing files are skipped with a warning. Loading a Volume file into its table (`COPY INTO`) happens automatically from here — a file-arrival-triggered Databricks Job picks it up within about a minute (see Section 1, step 6). No further action needed as long as that one-time Job setup has been run.
 
 ## 4. Manual-test utilities
 
@@ -90,10 +99,11 @@ No separate airline/airport API calls — both are derived from the callsign rou
 
 | Workflow | Trigger | Status |
 |---|---|---|
-| `infra-deploy.yml` | push to `main` (`de-pipeline/databricks/**`), or manual | **Working** — Section 1 |
+| `databricks-infra-deploy.yml` | push to `main` (`de-pipeline/databricks/**`), or manual | **Working** — Section 1 |
+| `databricks-infra-destroy.yml` | manual only, requires typing `destroy` to confirm | **Working** — drops the 5 Bronze tables (see Section 1, step 4) |
 | `de-ingest.yml` | manual / `repository_dispatch` | **Stale, doesn't work** — OpenSky blocks GitHub Actions IPs; also out of date vs. the current scripts. Kept for reference only. |
 
-**Secrets:** `DATABRICKS_HOST`/`HTTP_PATH`/`CLIENT_ID`/`CLIENT_SECRET` (or `DATABRICKS_TOKEN`), `ADMIN_PRINCIPAL` (optional) — all for `infra-deploy.yml` only. `OPENSKY_*` creds live in local `.env` only.
+**Secrets:** `DATABRICKS_HOST`/`HTTP_PATH`/`CLIENT_ID`/`CLIENT_SECRET` (or `DATABRICKS_TOKEN`), `ADMIN_PRINCIPAL` (optional) — all for `databricks-infra-deploy.yml`/`databricks-infra-destroy.yml`. `OPENSKY_*` creds live in local `.env` only.
 
 ## 6. Running ingestion daily (local)
 
@@ -102,7 +112,7 @@ GitHub Actions can't reach OpenSky (IP-blocked) and Databricks compute can't eit
 **`run_daily.bat`** runs, in sequence, logging to `ingest_daily.log`:
 1. `ingest_opensky.py`
 2. `ingest_adsbdb.py` (default mode)
-3. `load_to_databricks.py flight_raw airlines airports callsigns`
+3. `load_to_databricks.py flights_raw airlines airports callsigns`
 
 (`--aircraft` / `aircrafts` are manual, not part of this daily run.)
 
