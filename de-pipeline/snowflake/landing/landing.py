@@ -2,12 +2,13 @@
 de-pipeline/databricks/landing/landing.py's one-Job-per-table split, but as plain SQL: a
 Snowflake PIPE is a SQL object (CREATE PIPE ... AS COPY INTO ...), no SDK/Job-API needed.
 
-AUTO_INGEST is deliberately FALSE: Snowflake's automatic file-arrival ingestion for an INTERNAL
-stage is only available on AWS-hosted accounts (and even then needs cloud-side event
-notifications configured outside Snowflake) - not portable, and not something this script can
-set up on its own. Instead, de-pipeline/ingestion/load_to_snowflake.py calls
-`ALTER PIPE ... REFRESH` immediately after each upload, which achieves the same "load on
-upload" outcome for any account/cloud, using only SQL over the same connection.
+AUTO_INGEST = TRUE - per Snowflake's own CREATE PIPE docs, automatic file-arrival ingestion for
+an INTERNAL stage is only supported on AWS-hosted accounts, and is marked a Preview Feature
+there (may need enabling, no GA stability guarantee). If the account isn't AWS-hosted or the
+preview feature isn't enabled, this flag silently does nothing - no error, the pipe just never
+fires on its own. de-pipeline/ingestion/load_to_snowflake.py still calls
+`ALTER PIPE ... REFRESH` immediately after each upload as a portable fallback - a no-op if
+AUTO_INGEST already loaded the file, but what actually does the loading everywhere else.
 
 Run once (idempotent - CREATE OR REPLACE) to create all 5 pipes, and again any time a
 sql/*.sql file or TABLES changes.

@@ -1,7 +1,8 @@
 @echo off
 REM Daily local ingestion - point Windows Task Scheduler at this file.
-REM Runs in sequence: fetch from OpenSky -> enrich via adsbdb -> upload CSVs to the Databricks
-REM landing volume. COPY INTO'ing them into the actual tables is a separate, manual step - see
+REM Runs in sequence: fetch from OpenSky -> enrich via adsbdb -> upload CSVs to both the
+REM Databricks landing volume and the Snowflake landing stage. Loading those into the actual
+REM tables (COPY INTO / pipe refresh) happens as part of the upload steps themselves - see
 REM README.md. Aircraft data is loaded manually (--aircraft) when needed, not part of this run.
 cd /d "%~dp0"
 
@@ -25,5 +26,9 @@ python ingest_adsbdb.py >> ingest_daily.log 2>&1
 echo == >> ingest_daily.log
 echo ---- load_to_databricks.py ---- >> ingest_daily.log
 python load_to_databricks.py flights_raw airlines airports callsigns >> ingest_daily.log 2>&1
+
+echo == >> ingest_daily.log
+echo ---- load_to_snowflake.py ---- >> ingest_daily.log
+python load_to_snowflake.py flights_raw airlines airports callsigns >> ingest_daily.log 2>&1
 
 echo ==========###################################========== >> ingest_daily.log
