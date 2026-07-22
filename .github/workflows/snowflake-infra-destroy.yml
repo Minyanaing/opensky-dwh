@@ -1,0 +1,43 @@
+name: Snowflake infra destroy
+
+# Destructive - drops the 5 Bronze tables (database/schema/stage/file format untouched).
+# workflow_dispatch only, deliberately no push trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'destroy' to confirm - deletes the 5 OPENSKY_DB.BRONZE tables"
+        required: true
+
+jobs:
+  snowflake-destroy:
+    runs-on: ubuntu-latest
+    environment: infra
+    steps:
+      - name: Check confirmation input
+        if: ${{ github.event.inputs.confirm != 'destroy' }}
+        run: |
+          echo "Confirmation input must be exactly 'destroy' - aborting."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/snowflake
+        run: pip install -r requirements.txt
+
+      - name: Destroy Snowflake landing tables (OPENSKY_DB.BRONZE)
+        working-directory: de-pipeline/snowflake/setup
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_DEV_SVC_USER: ${{ secrets.SNOWFLAKE_DEV_SVC_USER }}
+          SNOWFLAKE_DEV_SVC_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_DEV_SVC_PRIVATE_KEY }}
+          SNOWFLAKE_DEV_SVC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_DEV_SVC_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+        run: python snowflake_setup.py destroy.sql

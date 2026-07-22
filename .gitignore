@@ -13,3 +13,6 @@ de-pipeline/ingestion/*.log
 # Databricks credentials
 de-pipeline/.keys/
 de-pipeline/databricks/.env
+
+# Snowflake credentials (private key)
+de-pipeline/snowflake/.env
