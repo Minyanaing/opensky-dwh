@@ -1,0 +1,38 @@
+name: Validate PR Pipeline Flow
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  validate-branch-flow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce PR Base and Head rules
+        run: |
+          BASE_BRANCH="${{ github.base_ref }}"
+          HEAD_BRANCH="${{ github.head_ref }}"
+
+          echo "Base: $BASE_BRANCH | Head: $HEAD_BRANCH"
+
+          # Rule 1: PR to main_prod MUST come from main_qa
+          if [ "$BASE_BRANCH" = "main_prod" ] && [ "$HEAD_BRANCH" != "main_qa" ]; then
+            echo "❌ ERROR: Pull requests to 'main_prod' are only allowed from 'main_qa'."
+            exit 1
+          fi
+
+          # Rule 2: PR to main_qa MUST come from main
+          if [ "$BASE_BRANCH" = "main_qa" ] && [ "$HEAD_BRANCH" != "main" ]; then
+            echo "❌ ERROR: Pull requests to 'main_qa' are only allowed from 'main'."
+            exit 1
+          fi
+
+          # Rule 3: PR to main CANNOT come from main_qa or main_prod
+          if [ "$BASE_BRANCH" = "main" ]; then
+            if [ "$HEAD_BRANCH" = "main_qa" ] || [ "$HEAD_BRANCH" = "main_prod" ]; then
+              echo "❌ ERROR: Cannot merge backward from '$HEAD_BRANCH' into 'main'."
+              exit 1
+            fi
+          fi
+
+          echo "✅ PR direction matches standard deployment pipeline!"

@@ -1,0 +1,43 @@
+name: Databricks environment catalog deploy
+
+on:
+  push:
+    branches: [main, main_qa, main_prod]
+    paths:
+      - "de-pipeline/databricks/env_setup/**"
+  workflow_dispatch: {}
+
+jobs:
+  env-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/databricks
+        run: pip install -r requirements.txt
+
+      - name: Resolve environment from branch
+        id: resolve
+        run: |
+          case "${{ github.ref_name }}" in
+            main) echo "env=dev" >> "$GITHUB_OUTPUT" ;;
+            main_qa) echo "env=qa" >> "$GITHUB_OUTPUT" ;;
+            main_prod) echo "env=prod" >> "$GITHUB_OUTPUT" ;;
+            *) echo "No environment mapping for branch '${{ github.ref_name }}'"; exit 1 ;;
+          esac
+
+      - name: Create/update the environment catalog
+        working-directory: de-pipeline/databricks/env_setup
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          ADMIN_PRINCIPAL: ${{ secrets.ADMIN_PRINCIPAL }}
+        run: python env_setup.py --sql-file setup.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
