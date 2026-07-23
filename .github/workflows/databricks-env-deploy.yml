@@ -22,14 +22,14 @@ jobs:
         working-directory: de-pipeline/databricks
         run: pip install -r requirements.txt
 
-      - name: Resolve catalog from branch
+      - name: Resolve environment from branch
         id: resolve
         run: |
           case "${{ github.ref_name }}" in
-            main) echo "catalog=dev_catalog" >> "$GITHUB_OUTPUT" ;;
-            main_qa) echo "catalog=qa_catalog" >> "$GITHUB_OUTPUT" ;;
-            main_prod) echo "catalog=prod_catalog" >> "$GITHUB_OUTPUT" ;;
-            *) echo "No catalog mapping for branch '${{ github.ref_name }}'"; exit 1 ;;
+            main) echo "env=dev" >> "$GITHUB_OUTPUT" ;;
+            main_qa) echo "env=qa" >> "$GITHUB_OUTPUT" ;;
+            main_prod) echo "env=prod" >> "$GITHUB_OUTPUT" ;;
+            *) echo "No environment mapping for branch '${{ github.ref_name }}'"; exit 1 ;;
           esac
 
       - name: Create/update the environment catalog
@@ -39,4 +39,4 @@ jobs:
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: python env_setup.py --sql-file setup.sql --catalog ${{ steps.resolve.outputs.catalog }}
+        run: python env_setup.py --sql-file setup.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
