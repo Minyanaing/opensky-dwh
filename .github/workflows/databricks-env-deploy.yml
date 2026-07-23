@@ -39,4 +39,5 @@ jobs:
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          ADMIN_PRINCIPAL: ${{ secrets.ADMIN_PRINCIPAL }}
         run: python env_setup.py --sql-file setup.sql --catalog ${{ steps.resolve.outputs.env }}_catalog

@@ -74,8 +74,25 @@ def _apply_catalog(statements, catalog):
     return [s.replace("{{CATALOG}}", catalog) for s in statements]
 
 
+def _apply_admin_principal(statements):
+    """Substitute {{ADMIN_PRINCIPAL}} from its env var, or drop the statement if unset."""
+    admin_principal = os.environ.get("ADMIN_PRINCIPAL", "").strip()
+    if admin_principal:
+        return [s.replace("{{ADMIN_PRINCIPAL}}", f"`{admin_principal}`") for s in statements]
+
+    kept, skipped = [], 0
+    for statement in statements:
+        if "{{ADMIN_PRINCIPAL}}" in statement:
+            skipped += 1
+        else:
+            kept.append(statement)
+    if skipped:
+        logger.info("ADMIN_PRINCIPAL not set - skipping %s statement(s) that reference it", skipped)
+    return kept
+
+
 def run(sql_file, catalog=None):
-    statements = _apply_catalog(_statements(sql_file.read_text(encoding="utf-8")), catalog)
+    statements = _apply_admin_principal(_apply_catalog(_statements(sql_file.read_text(encoding="utf-8")), catalog))
     suffix = f" (catalog={catalog})" if catalog else ""
     logger.info("Applying %s statement(s) from %s%s", len(statements), sql_file, suffix)
 
