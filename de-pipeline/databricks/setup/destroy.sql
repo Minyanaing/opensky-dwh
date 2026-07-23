@@ -5,3 +5,5 @@ DROP TABLE IF EXISTS opensky_raw.bronze.callsigns;
 DROP TABLE IF EXISTS opensky_raw.bronze.airlines;
 DROP TABLE IF EXISTS opensky_raw.bronze.airports;
 DROP TABLE IF EXISTS opensky_raw.bronze.aircrafts;
+DROP TABLE IF EXISTS opensky_raw.bronze.airport_data;
+-- DROP TABLE IF EXISTS opensky_raw.bronze.airports_master;

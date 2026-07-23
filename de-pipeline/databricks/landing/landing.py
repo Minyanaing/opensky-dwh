@@ -29,6 +29,8 @@ TABLES = [
     ("airlines", "airlines"),
     ("airports", "airports"),
     ("aircrafts", "aircrafts"),
+    ("airport_data", "airport_data"),
+    ("airports_master", "airports_master"),
 ]
 
 SQL_DIR = Path(__file__).parent / "sql"

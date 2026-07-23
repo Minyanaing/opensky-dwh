@@ -1,15 +1,19 @@
 """Uploads local CSV exports to the opensky_raw.bronze.landing Unity Catalog Volume, one
 sub-folder per dataset. Which dataset(s) to upload is required on the command line:
 
-  python load_to_databricks.py flights_raw airlines airports callsigns aircrafts
+  python load_to_databricks.py flights_raw airlines airports callsigns aircrafts airport_data
   python load_to_databricks.py flights_raw callsigns   # just these two
+  python load_to_databricks.py airports_master         # one-off/occasional master reload
 
 Dataset name -> (local file, volume folder):
-  flights_raw -> flights_raw.csv       -> flights_raw/
-  airlines   -> adsbdb_airlines.csv    -> airlines/
-  airports   -> adsbdb_airports.csv    -> airports/
-  callsigns  -> adsbdb_callsigns.csv   -> callsigns/
-  aircrafts  -> adsbdb_aircraft.csv    -> aircrafts/
+  flights_raw     -> flights_raw.csv       -> flights_raw/
+  airlines        -> adsbdb_airlines.csv    -> airlines/
+  airports        -> adsbdb_airports.csv    -> airports/
+  callsigns       -> adsbdb_callsigns.csv   -> callsigns/
+  aircrafts       -> adsbdb_aircraft.csv    -> aircrafts/
+  airport_data    -> airport_data.csv       -> airport_data/
+  airports_master -> master_airports.csv    -> airports_master/  (not part of the daily run - see
+                                                                   run_daily.bat)
 
 This only uploads files - it does not load them into any table. That's a separate step,
 COPY INTO, run manually or on a schedule - see README.md.
@@ -38,6 +42,8 @@ DATASETS = {
     "airports": ("adsbdb_airports.csv", "airports"),
     "callsigns": ("adsbdb_callsigns.csv", "callsigns"),
     "aircrafts": ("adsbdb_aircraft.csv", "aircrafts"),
+    "airport_data": ("airport_data.csv", "airport_data"),
+    "airports_master": ("master_airports.csv", "airports_master"),
 }
 
 
