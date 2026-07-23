@@ -1,23 +1,25 @@
 """Uploads local CSV exports to the OPENSKY_DB.BRONZE.LANDING Snowflake internal stage, one
-subfolder per dataset, then refreshes that dataset's PIPE so it loads immediately - mirrors
-load_to_databricks.py, plus the explicit refresh (see snowflake/landing/landing.py's docstring
-for why: internal-stage AUTO_INGEST isn't portable across accounts/clouds, so this script
-triggers ingestion itself instead of waiting on a passive listener).
+timestamped file per dataset - mirrors load_to_databricks.py exactly: this only uploads files,
+it does not load them into any table. That's handled separately, either by AUTO_INGEST (if
+active for the account - see snowflake/landing/landing.py) or a manual `ALTER PIPE ... REFRESH`.
 
   python load_to_snowflake.py flights_raw airlines airports callsigns aircrafts
   python load_to_snowflake.py flights_raw callsigns   # just these two
 
-Dataset name -> (local file, stage folder, pipe):
-  flights_raw -> flights_raw.csv       -> flights_raw/  -> FLIGHTS_RAW_PIPE
-  airlines    -> adsbdb_airlines.csv   -> airlines/     -> AIRLINES_PIPE
-  airports    -> adsbdb_airports.csv   -> airports/     -> AIRPORTS_PIPE
-  callsigns   -> adsbdb_callsigns.csv  -> callsigns/    -> CALLSIGNS_PIPE
-  aircrafts   -> adsbdb_aircraft.csv   -> aircrafts/    -> AIRCRAFTS_PIPE
+Dataset name -> (local file, stage folder):
+  flights_raw -> flights_raw.csv       -> flights_raw/
+  airlines    -> adsbdb_airlines.csv   -> airlines/
+  airports    -> adsbdb_airports.csv   -> airports/
+  callsigns   -> adsbdb_callsigns.csv  -> callsigns/
+  aircrafts   -> adsbdb_aircraft.csv   -> aircrafts/
 """
 
 import argparse
 import logging
 import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import snowflake.connector
@@ -36,13 +38,13 @@ DATABASE = "OPENSKY_DB"
 SCHEMA = "BRONZE"
 STAGE = "LANDING"
 
-# dataset name -> (local filename, stage folder, pipe name)
+# dataset name -> (local filename, stage folder)
 DATASETS = {
-    "flights_raw": ("flights_raw.csv", "flights_raw", "FLIGHTS_RAW_PIPE"),
-    "airlines": ("adsbdb_airlines.csv", "airlines", "AIRLINES_PIPE"),
-    "airports": ("adsbdb_airports.csv", "airports", "AIRPORTS_PIPE"),
-    "callsigns": ("adsbdb_callsigns.csv", "callsigns", "CALLSIGNS_PIPE"),
-    "aircrafts": ("adsbdb_aircraft.csv", "aircrafts", "AIRCRAFTS_PIPE"),
+    "flights_raw": ("flights_raw.csv", "flights_raw"),
+    "airlines": ("adsbdb_airlines.csv", "airlines"),
+    "airports": ("adsbdb_airports.csv", "airports"),
+    "callsigns": ("adsbdb_callsigns.csv", "callsigns"),
+    "aircrafts": ("adsbdb_aircraft.csv", "aircrafts"),
 }
 
 
@@ -111,15 +113,19 @@ def _file_uri(local_path):
 
 
 def upload_file(cursor, local_path, folder):
-    file_uri = _file_uri(local_path)
+    """Upload one local file to @OPENSKY_DB.BRONZE.LANDING/<folder>/<timestamped-name>. PUT
+    always uses the source file's own basename, so the timestamped name comes from a temp copy."""
+    local_path = Path(local_path)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    remote_name = f"{local_path.stem}_{stamp}{local_path.suffix}"
     stage_path = f"@{DATABASE}.{SCHEMA}.{STAGE}/{folder}/"
-    cursor.execute(f"PUT '{file_uri}' {stage_path} AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
-    logger.info("Uploaded %s -> %s", local_path, stage_path)
 
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        renamed_path = Path(tmp_dir) / remote_name
+        shutil.copy2(local_path, renamed_path)
+        cursor.execute(f"PUT '{_file_uri(renamed_path)}' {stage_path} AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
 
-def refresh_pipe(cursor, pipe_name):
-    cursor.execute(f"ALTER PIPE {DATABASE}.{SCHEMA}.{pipe_name} REFRESH")
-    logger.info("Refreshed %s", pipe_name)
+    logger.info("Uploaded %s -> %s%s", local_path, stage_path, remote_name)
 
 
 def run(input_dir, datasets):
@@ -130,18 +136,17 @@ def run(input_dir, datasets):
     try:
         cursor = connection.cursor()
         for dataset in datasets:
-            filename, folder, pipe_name = DATASETS[dataset]
+            filename, folder = DATASETS[dataset]
             local_path = in_dir / filename
             if not local_path.is_file():
                 logger.warning("%s not found, skipping %s", local_path, dataset)
                 continue
             upload_file(cursor, local_path, folder)
-            refresh_pipe(cursor, pipe_name)
             uploaded[dataset] = folder
     finally:
         connection.close()
 
-    logger.info("Uploaded and refreshed %s dataset(s)", len(uploaded))
+    logger.info("Uploaded %s dataset(s)", len(uploaded))
     return uploaded
 
 

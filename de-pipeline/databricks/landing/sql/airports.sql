@@ -1,6 +1,13 @@
 COPY INTO opensky_raw.bronze.airports
 FROM (
-  SELECT *, current_timestamp() AS _loaded_at
+  SELECT
+    icao,
+    iata,
+    name,
+    country,
+    CAST(lat AS DOUBLE) AS lat,
+    CAST(lon AS DOUBLE) AS lon,
+    current_timestamp() AS _loaded_at
   FROM '/Volumes/opensky_raw/bronze/landing/airports/'
 )
 FILEFORMAT = CSV
