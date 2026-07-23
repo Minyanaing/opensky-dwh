@@ -33,7 +33,7 @@ python ingest_adsbdb.py >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- load_to_databricks.py ---- >> ingest_daily.log
-python load_to_databricks.py flights_raw airlines airports callsigns >> ingest_daily.log 2>&1
+python load_to_databricks.py flights_raw airlines airports callsigns airport_data >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- load_to_snowflake.py ---- >> ingest_daily.log

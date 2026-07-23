@@ -1,0 +1,32 @@
+name: Databricks landing deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "de-pipeline/databricks/landing/**"
+  workflow_dispatch: {}
+
+jobs:
+  databricks-landing-deploy:
+    runs-on: ubuntu-latest
+    environment: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/databricks
+        run: pip install -r requirements.txt
+
+      - name: Create/update landing COPY INTO jobs (opensky_raw.bronze)
+        working-directory: de-pipeline/databricks/landing
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python landing.py

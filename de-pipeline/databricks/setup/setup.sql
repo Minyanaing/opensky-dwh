@@ -90,6 +90,46 @@ CREATE TABLE IF NOT EXISTS opensky_raw.bronze.aircrafts (
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 
+-- Matches ingest_airports.py's output (airport-data.com API) - a different source/schema from
+-- the adsbdb-derived `airports` table above, so it gets its own table.
+CREATE TABLE IF NOT EXISTS opensky_raw.bronze.airport_data (
+    `icao` STRING,
+    `iata` STRING,
+    `name` STRING,
+    `location` STRING,
+    `country` STRING,
+    `country_code` STRING,
+    `longitude` DOUBLE,
+    `latitude` DOUBLE,
+    `fetched_at` STRING,
+    `_loaded_at` TIMESTAMP
+) USING DELTA;
+
+-- OurAirports.com global reference dataset (data/master_airports.csv) - a one-off/occasional
+-- master load, not a per-run dataset, but uses the same landing/COPY INTO mechanism.
+CREATE TABLE IF NOT EXISTS opensky_raw.bronze.airports_master (
+    `id` BIGINT,
+    `ident` STRING,
+    `type` STRING,
+    `name` STRING,
+    `latitude_deg` DOUBLE,
+    `longitude_deg` DOUBLE,
+    `elevation_ft` BIGINT,
+    `continent` STRING,
+    `iso_country` STRING,
+    `iso_region` STRING,
+    `municipality` STRING,
+    `scheduled_service` STRING,
+    `icao_code` STRING,
+    `iata_code` STRING,
+    `gps_code` STRING,
+    `local_code` STRING,
+    `home_link` STRING,
+    `wikipedia_link` STRING,
+    `keywords` STRING,
+    `_loaded_at` TIMESTAMP
+) USING DELTA;
+
 -- Optional: full access for a human account. Skipped if ADMIN_PRINCIPAL is unset.
 -- MANAGE is listed separately - ALL PRIVILEGES deliberately excludes it (anti-privilege-escalation),
 -- but without it ADMIN_PRINCIPAL can't DROP/ALTER tables it doesn't own.
