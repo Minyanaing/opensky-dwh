@@ -7,7 +7,8 @@ venv/
 
 # Ingestion local secrets & output
 de-pipeline/ingestion/.env
-de-pipeline/ingestion/data/
+de-pipeline/ingestion/data/*
+!de-pipeline/ingestion/data/*_old.csv
 de-pipeline/ingestion/*.log
 
 # Databricks credentials
