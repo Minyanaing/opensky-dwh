@@ -1,18 +1,6 @@
-"""Silver-layer transformation deploy. Reuses the auth/upload/job-orchestration helpers from
-databricks_transform_common.py rather than duplicating them.
-
-Substitutes {{CATALOG}} in each transformation/silver/*.sql file and uploads it to the Databricks
-workspace (/Shared/opensky/silver/<catalog>/), then creates/updates one Databricks Job that runs
-them as sequential SQL tasks - flights -> callsigns -> airlines -> airports -> aircrafts, each
-depending on the one before it so they run strictly one after another, not in parallel - on a
-daily cron schedule (09:08 Asia/Bangkok).
-
---catalog is required (dev_catalog/qa_catalog/prod_catalog): this is one shared workspace across
-all three environments (see env_setup.py), so both the uploaded path and the job name are scoped
-per catalog - otherwise deploying qa_catalog would silently overwrite dev_catalog's job and SQL.
-
-Unlike databricks/landing/landing.py (one Job per table, file-arrival triggered), this is one Job
-with an ordered task chain, cron triggered - the silver layer runs on a schedule, not on upload."""
+"""Deploys the silver transform Job: uploads silver/*.sql (per catalog) and schedules them as a
+sequential task chain, 09:08 Asia/Bangkok daily. Reusable helpers live in
+databricks_transform_common.py."""
 
 import argparse
 import logging
@@ -35,13 +23,12 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Order matters - each task depends on the one before it, so they run strictly in sequence.
 TASK_ORDER = ["flights", "callsigns", "airlines", "airports", "aircrafts"]
 
 SQL_DIR = Path(__file__).parent / "silver"
 JOB_NAME_PREFIX = "opensky-silver-transform"
 WORKSPACE_ROOT = "/Shared/opensky/silver"
-CRON_SCHEDULE = "0 8 9 * * ?"  # Quartz: sec min hour day month dow - 09:08:00 daily
+CRON_SCHEDULE = "0 8 9 * * ?"  # 09:08:00 daily
 TIMEZONE_ID = "Asia/Bangkok"
 
 

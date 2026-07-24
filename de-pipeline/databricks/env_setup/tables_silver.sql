@@ -1,12 +1,6 @@
--- Silver/Gold table definitions - written once here, identical across dev_catalog/qa_catalog/
--- prod_catalog. Use the {{CATALOG}} placeholder instead of hardcoding a catalog name - env_setup.py
--- --catalog <dev_catalog|qa_catalog|prod_catalog> substitutes it before applying, so running this
--- file once per environment produces identical tables in each.
+-- {{CATALOG}} substituted per environment by env_setup.py --catalog. Gold tables: tables_gold.sql.
 
--- Populated by transformation/silver/silver_flights.sql - flight_key (md5 of the match key) lets
--- MERGE compare one column instead of 5; see that file for why movement_type is excluded from it.
--- year/month/day are plain columns, not GENERATED (MERGE ... INSERT * requires the source to
--- supply every target column - see delta-io/delta#3318), derived from flight_date in the SELECT.
+-- flight_key = md5 of the match key, which excludes movement_type - see silver_flights.sql.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.flights (
     `flight_key` STRING,
     `flight_date` DATE,
@@ -25,8 +19,6 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.flights (
 ) USING DELTA
 PARTITIONED BY (year, month, day);
 
--- Populated by transformation/silver/silver_airlines.sql. Bronze airlines are already deduped by
--- icao (ingest_adsbdb.py), so the merge key is icao alone - no hash column needed for one column.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.airlines (
     `icao` STRING,
     `iata` STRING,
@@ -37,8 +29,6 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.airlines (
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 
--- Populated by transformation/silver/silver_aircrafts.sql. Merge key is icao24 alone (one row per
--- aircraft, from ingest_adsbdb.py --aircraft).
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.aircrafts (
     `icao24` STRING,
     `type` STRING,
@@ -52,9 +42,6 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.aircrafts (
 ) USING DELTA
 PARTITIONED BY (registered_owner_country);
 
--- Populated by transformation/silver/silver_callsigns.sql. Merge key is callsign alone (already
--- deduped upstream by export_callsigns.py's new-only diff). year/month/day partition by ingestion
--- date - callsigns has no per-row flight-event timestamp of its own.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.callsigns (
     `flight_date` DATE,
     `year` INT,
@@ -74,12 +61,7 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.callsigns (
 ) USING DELTA
 PARTITIONED BY (year, month, day);
 
--- Populated by transformation/silver/silver_airports.sql - opensky_raw.bronze.airports (adsbdb)
--- and opensky_raw.bronze.airport_data (airport-data.com), each scoped to its own latest batch and
--- deduped to one row per (icao, iata), full-outer-joined on icao, then left-joined to
--- opensky_raw.bronze.airports_master (OurAirports) for name/country/lat/lon fallback plus
--- master-only attributes. Merge key is (icao, iata), and unlike the other silver tables this one
--- also UPDATEs on match - see that file for why.
+-- Unlike the other silver tables, this one UPDATEs on match - see silver_airports.sql.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.airports (
     `icao` STRING,
     `iata` STRING,
