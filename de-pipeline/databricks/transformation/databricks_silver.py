@@ -1,5 +1,5 @@
 """Deploys the silver transform Job: uploads silver/*.sql (per catalog) and schedules them as a
-sequential task chain, 09:08 Asia/Bangkok daily. Reusable helpers live in
+sequential task chain, 11:00 Asia/Bangkok daily. Reusable helpers live in
 databricks_transform_common.py."""
 
 import argparse
@@ -28,7 +28,7 @@ TASK_ORDER = ["flights", "callsigns", "airlines", "airports", "aircrafts"]
 SQL_DIR = Path(__file__).parent / "silver"
 JOB_NAME_PREFIX = "opensky-silver-transform"
 WORKSPACE_ROOT = "/Shared/opensky/silver"
-CRON_SCHEDULE = "0 8 9 * * ?"  # 09:08:00 daily
+CRON_SCHEDULE = "0 0 11 * * ?"  # 11:00:00 daily
 TIMEZONE_ID = "Asia/Bangkok"
 
 
@@ -50,7 +50,7 @@ def run(http_path, catalog):
     job_id = create_or_update_job(client, f"{JOB_NAME_PREFIX}-{catalog}", tasks, schedule)
 
     logger.info(
-        "Job %s ready - runs %s daily at 09:08 %s (%s)",
+        "Job %s ready - runs %s daily at 11:00 %s (%s)",
         job_id,
         " -> ".join(TASK_ORDER),
         TIMEZONE_ID,

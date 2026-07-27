@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.flights (
 ) USING DELTA
 PARTITIONED BY (year, month, day);
 
+-- airline_key = md5 of every column except the loaded_at audit columns - a changed value gets its
+-- own new row instead of overwriting the old one, so this table keeps history.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.airlines (
+    `airline_key` STRING,
     `icao` STRING,
     `iata` STRING,
     `name` STRING,
@@ -29,7 +32,10 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.airlines (
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 
+-- aircraft_key = md5 of every column except the loaded_at audit columns - a changed value gets
+-- its own new row instead of overwriting the old one, so this table keeps history.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.aircrafts (
+    `aircraft_key` STRING,
     `icao24` STRING,
     `type` STRING,
     `icao_type` STRING,
@@ -42,7 +48,11 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.aircrafts (
 ) USING DELTA
 PARTITIONED BY (registered_owner_country);
 
+-- callsign_key = md5 of callsign/callsign_icao/callsign_iata/airline_icao/airline_iata/
+-- origin_icao/origin_iata/destination_icao/destination_iata - a changed value gets its own new
+-- row instead of overwriting the old one, so this table keeps history.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.callsigns (
+    `callsign_key` STRING,
     `flight_date` DATE,
     `year` INT,
     `month` INT,
@@ -61,8 +71,10 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.callsigns (
 ) USING DELTA
 PARTITIONED BY (year, month, day);
 
--- Unlike the other silver tables, this one UPDATEs on match - see silver_airports.sql.
+-- airport_key = md5 of icao/iata/name - a changed name gets its own new row instead of
+-- overwriting the old one, so this table keeps history.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.silver_flights.airports (
+    `airport_key` STRING,
     `icao` STRING,
     `iata` STRING,
     `name` STRING,
