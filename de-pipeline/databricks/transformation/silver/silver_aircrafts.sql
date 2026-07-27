@@ -30,6 +30,8 @@ BEGIN
         current_timestamp() AS _loaded_at
       FROM opensky_raw.bronze.aircrafts
       WHERE icao24 IS NOT NULL
+        AND type IS NOT NULL
+        AND icao_type IS NOT NULL
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY md5(
           concat_ws(
@@ -68,6 +70,8 @@ BEGIN
         current_timestamp() AS _loaded_at
       FROM opensky_raw.bronze.aircrafts
       WHERE icao24 IS NOT NULL
+        AND type IS NOT NULL
+        AND icao_type IS NOT NULL
         AND _loaded_at = (SELECT MAX(_loaded_at) FROM opensky_raw.bronze.aircrafts)
     ) AS source
     ON target.aircraft_key = source.aircraft_key
