@@ -13,16 +13,19 @@ BEGIN
   MERGE INTO {{CATALOG}}.gold_flights.dim_aircraft AS target
   USING (
     WITH incoming AS (
-      SELECT 
-        DISTINCT icao24, type, icao_type, manufacturer, registration, registered_owner,
-        registered_owner_country, _loaded_at
+      SELECT
+        * EXCEPT (_loaded_at_raw)
       FROM {{CATALOG}}.silver_flights.aircrafts
       WHERE _loaded_at >= cutoff
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY aircraft_key ORDER BY _loaded_at) = 1
     ),
     combined AS (
-      SELECT icao24, effective_start AS _loaded_at FROM {{CATALOG}}.gold_flights.dim_aircraft WHERE is_current
-      UNION ALL
-      SELECT icao24, _loaded_at FROM incoming
+      SELECT icao24, effective_start AS _loaded_at 
+      FROM {{CATALOG}}.gold_flights.dim_aircraft 
+      WHERE is_current
+        UNION ALL
+      SELECT icao24, _loaded_at 
+      FROM incoming
     )
     SELECT icao24, _loaded_at AS effective_start, LEAD(_loaded_at) OVER (PARTITION BY icao24 ORDER BY _loaded_at) AS next_loaded_at
     FROM combined
@@ -36,10 +39,11 @@ BEGIN
   MERGE INTO {{CATALOG}}.gold_flights.dim_aircraft AS target
   USING (
     WITH incoming AS (
-      SELECT DISTINCT icao24, type, icao_type, manufacturer, registration, registered_owner,
-        registered_owner_country, _loaded_at
+      SELECT 
+        * EXCEPT (_loaded_at_raw)
       FROM {{CATALOG}}.silver_flights.aircrafts
       WHERE _loaded_at >= cutoff
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY aircraft_key ORDER BY _loaded_at) = 1
     ),
     combined AS (
       SELECT icao24, type, icao_type, manufacturer, registration, registered_owner,
