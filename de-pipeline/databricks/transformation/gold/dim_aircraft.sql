@@ -4,7 +4,7 @@
 -- FLAG: lookback_days assumes a version is never missed for that long; a gap wider than that would
 -- silently skip it. Revisit if needed.
 BEGIN
-  DECLARE lookback_days INT DEFAULT 3;
+  DECLARE lookback_days INT DEFAULT 5;
   DECLARE cutoff TIMESTAMP;
   SET cutoff = (
     SELECT MAX(_loaded_at) FROM {{CATALOG}}.silver_flights.aircrafts
@@ -13,7 +13,8 @@ BEGIN
   MERGE INTO {{CATALOG}}.gold_flights.dim_aircraft AS target
   USING (
     WITH incoming AS (
-      SELECT DISTINCT icao24, type, icao_type, manufacturer, registration, registered_owner,
+      SELECT 
+        DISTINCT icao24, type, icao_type, manufacturer, registration, registered_owner,
         registered_owner_country, _loaded_at
       FROM {{CATALOG}}.silver_flights.aircrafts
       WHERE _loaded_at >= cutoff

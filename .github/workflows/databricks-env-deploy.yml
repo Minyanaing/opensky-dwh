@@ -60,11 +60,11 @@ jobs:
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: python env_setup.py --sql-file tables_silver.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
 
-      # - name: Create/update the Gold tables
-      #   working-directory: de-pipeline/databricks/env_setup
-      #   env:
-      #     DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      #     DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
-      #     DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-      #     DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-      #   run: python env_setup.py --sql-file tables_gold.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
+      - name: Create/update the Gold tables
+        working-directory: de-pipeline/databricks/env_setup
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python env_setup.py --sql-file tables_gold.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
