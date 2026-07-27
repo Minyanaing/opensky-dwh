@@ -42,6 +42,15 @@ jobs:
           ADMIN_PRINCIPAL: ${{ secrets.ADMIN_PRINCIPAL }}
         run: python env_setup.py --sql-file setup.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
 
+      - name: Create/update the Master tables
+        working-directory: de-pipeline/databricks/env_setup
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python env_setup.py --sql-file tables_master.sql --catalog ${{ steps.resolve.outputs.env }}_catalog
+
       - name: Create/update the Silver tables
         working-directory: de-pipeline/databricks/env_setup
         env:
