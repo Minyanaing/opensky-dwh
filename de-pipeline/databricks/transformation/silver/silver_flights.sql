@@ -23,15 +23,16 @@ BEGIN
             callsign,
             estDepartureAirport,
             estArrivalAirport,
-            CAST(date(fetched_at) AS STRING)
+            CAST(date(from_unixtime(firstSeen)) AS STRING),
+            CAST(date(from_unixtime(lastSeen)) AS STRING)
           )
         ) AS flight_key,
         date(fetched_at) AS flight_date,
         year(date(fetched_at)) AS year,
         month(date(fetched_at)) AS month,
         day(date(fetched_at)) AS day,
-        CAST(from_unixtime(firstSeen) AS TIMESTAMP) AS first_seen,
-        CAST(from_unixtime(lastSeen) AS TIMESTAMP) AS last_seen,
+        CAST(from_unixtime(firstSeen) AS TIMESTAMP) AS departure,
+        CAST(from_unixtime(lastSeen) AS TIMESTAMP) AS arrival,
         icao24,
         callsign,
         estDepartureAirport,
@@ -44,7 +45,9 @@ BEGIN
         AND estDepartureAirport IS NOT NULL
         AND estDepartureAirport != estArrivalAirport
       QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY icao24, callsign, estDepartureAirport, estArrivalAirport, date(fetched_at)
+        PARTITION BY
+          icao24, callsign, estDepartureAirport, estArrivalAirport,
+          date(from_unixtime(firstSeen)), date(from_unixtime(lastSeen))
         ORDER BY movement_type
       ) = 1
     ) AS source
@@ -62,15 +65,16 @@ BEGIN
             callsign,
             estDepartureAirport,
             estArrivalAirport,
-            CAST(date(fetched_at) AS STRING)
+            CAST(date(from_unixtime(firstSeen)) AS STRING),
+            CAST(date(from_unixtime(lastSeen)) AS STRING)
           )
         ) AS flight_key,
         date(fetched_at) AS flight_date,
         year(date(fetched_at)) AS year,
         month(date(fetched_at)) AS month,
         day(date(fetched_at)) AS day,
-        CAST(from_unixtime(firstSeen) AS TIMESTAMP) AS first_seen,
-        CAST(from_unixtime(lastSeen) AS TIMESTAMP) AS last_seen,
+        CAST(from_unixtime(firstSeen) AS TIMESTAMP) AS departure,
+        CAST(from_unixtime(lastSeen) AS TIMESTAMP) AS arrival,
         icao24,
         callsign,
         estDepartureAirport,
@@ -84,7 +88,9 @@ BEGIN
         AND estDepartureAirport != estArrivalAirport
         AND _loaded_at = (SELECT MAX(_loaded_at) FROM opensky_raw.bronze.flights_raw)
       QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY icao24, callsign, estDepartureAirport, estArrivalAirport, date(fetched_at)
+        PARTITION BY
+          icao24, callsign, estDepartureAirport, estArrivalAirport,
+          date(from_unixtime(firstSeen)), date(from_unixtime(lastSeen))
         ORDER BY movement_type
       ) = 1
     ) AS source
