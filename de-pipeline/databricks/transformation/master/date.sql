@@ -9,6 +9,7 @@ USING (
     year(d) AS year,
     quarter(d) AS quarter,
     month(d) AS month,
+    CAST(date_format(d, 'yyyyMM') AS INT) AS year_month,
     weekofyear(d) AS week_num,
     day(d) AS day,
     concat('Q', quarter(d)) AS quarter_name,
