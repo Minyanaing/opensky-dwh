@@ -1,15 +1,15 @@
-name: Databricks silver transform deploy
+name: Databricks master transform deploy
 
 on:
   push:
     branches: [main, main_qa, main_prod]
     paths:
-      - "de-pipeline/databricks/transformation/silver/**"
-      - "de-pipeline/databricks/transformation/databricks_silver.py"
+      - "de-pipeline/databricks/transformation/master/**"
+      - "de-pipeline/databricks/transformation/databricks_master.py"
   workflow_dispatch: {}
 
 jobs:
-  silver-deploy:
+  master-deploy:
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name }}
     steps:
@@ -33,11 +33,11 @@ jobs:
             *) echo "No environment mapping for branch '${{ github.ref_name }}'"; exit 1 ;;
           esac
 
-      - name: Deploy silver transform job
+      - name: Deploy master transform job
         working-directory: de-pipeline/databricks/transformation
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: python databricks_silver.py --catalog ${{ steps.resolve.outputs.env }}_catalog
+        run: python databricks_master.py --catalog ${{ steps.resolve.outputs.env }}_catalog
