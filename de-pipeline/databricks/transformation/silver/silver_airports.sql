@@ -1,27 +1,12 @@
--- {{CATALOG}} substituted per environment. See silver_flights.sql for why this needs to run as
--- ONE statement (BEGIN...END, Databricks Runtime 16.3+).
---
--- Each bronze source is deduped to one row per (icao, iata), then the two are FULL OUTER JOINed
--- on icao (not the (icao, iata) dedup key - a source with 2+ iata values for the same icao can fan
--- out here) so an airport present in only one source still survives.
---
--- lat/lon/name/country coalesce airports_master (OurAirports) as the fallback when the primary
--- join is missing them. lat/lon use NULLIF(..., 0) before the coalesce, not a plain NULL check -
--- airport-data.com returns 0/0 (not NULL) for airports it has no real coordinates for (see
--- ingest_airports.py), so a plain COALESCE would never fall through to master's real value.
---
--- This table UPDATEs on match, not just inserts - airports_master/bronze airports/airport_data can
--- all get corrected over time, and re-running should reflect that instead of freezing on whatever
--- was first loaded (the flights_raw-derived tables are append-only events, so INSERT-only is
--- correct there; this one is closer to a dimension, so it isn't).
+-- {{CATALOG}} substituted per environment. airport_key hashes icao/iata/name - a changed name
+-- gets its own new row instead of overwriting the old one, so this table keeps history. Other
+-- coalesced fields (country/lat/lon/etc) aren't part of the key, so they freeze at whatever was
+-- first captured for that icao/iata/name unless name also changes.
 BEGIN
   DECLARE row_count BIGINT DEFAULT 0;
   SET row_count = (SELECT COUNT(*) FROM {{CATALOG}}.silver_flights.airports);
 
   IF row_count = 0 THEN
-    -- Bootstrap: target is empty, load every day currently in each bronze source at once. The
-    -- QUALIFY dedups below already pick one row per (icao, iata) regardless of how many days are
-    -- in scope, so only the latest-batch restrictions need dropping, not the QUALIFYs themselves.
     MERGE INTO {{CATALOG}}.silver_flights.airports AS target
     USING (
       WITH airports_src AS (
@@ -61,6 +46,14 @@ BEGIN
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ident ORDER BY id) = 1
       )
       SELECT
+        md5(
+          concat_ws(
+            '||', 
+            j.icao, 
+            j.iata, 
+            COALESCE(j.name, m.name)
+          )
+        ) AS airport_key,
         j.icao,
         j.iata,
         COALESCE(j.name, m.name) AS name,
@@ -83,12 +76,14 @@ BEGIN
         current_timestamp() AS _loaded_at
       FROM joined AS j
       LEFT JOIN master_dedup AS m ON m.ident = j.icao
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY md5(concat_ws('||', j.icao, j.iata, COALESCE(j.name, m.name)))
+        ORDER BY j._loaded_at DESC
+      ) = 1
     ) AS source
-    ON target.icao <=> source.icao AND target.iata <=> source.iata
-    WHEN MATCHED THEN UPDATE SET *
+    ON target.airport_key = source.airport_key
     WHEN NOT MATCHED THEN INSERT *;
   ELSE
-    -- Incremental: each source scoped to its own newest batch only.
     MERGE INTO {{CATALOG}}.silver_flights.airports AS target
     USING (
       WITH airports_src AS (
@@ -131,6 +126,14 @@ BEGIN
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ident ORDER BY id) = 1
       )
       SELECT
+        md5(
+          concat_ws(
+            '||', 
+            j.icao, 
+            j.iata, 
+            COALESCE(j.name, m.name)
+          )
+        ) AS airport_key,
         j.icao,
         j.iata,
         COALESCE(j.name, m.name) AS name,
@@ -153,9 +156,20 @@ BEGIN
         current_timestamp() AS _loaded_at
       FROM joined AS j
       LEFT JOIN master_dedup AS m ON m.ident = j.icao
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY md5(concat_ws('||', j.icao, j.iata, COALESCE(j.name, m.name)))
+        ORDER BY j._loaded_at DESC
+      ) = 1
     ) AS source
-    ON target.icao <=> source.icao AND target.iata <=> source.iata
-    WHEN MATCHED THEN UPDATE SET *
+    ON target.airport_key = source.airport_key
     WHEN NOT MATCHED THEN INSERT *;
   END IF;
 END;
+
+-- Sample resulting rows for one icao after its name changes between loads - same icao/iata,
+-- only name differs, so it lands as a second row with a new airport_key:
+--
+-- airport_key  | icao | iata | name                      | _loaded_at
+-- -------------|------|------|---------------------------|-------------------
+-- 2c7e4b91...  | VTBS | BKK  | Suvarnabhumi Airport      | 2026-07-01 09:08:00
+-- 9a3f0d56...  | VTBS | BKK  | Suvarnabhumi International | 2026-07-15 09:08:00
