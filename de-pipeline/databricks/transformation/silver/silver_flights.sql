@@ -1,8 +1,9 @@
--- {{CATALOG}} substituted per environment. flight_key hashes the match key so MERGE compares one
--- column instead of 5; it excludes movement_type on purpose, which collapses a flight's departure-
--- and arrival-queried rows into one - QUALIFY picks a deterministic survivor (MERGE itself won't
--- dedupe unmatched source rows). year/month/day stay plain columns, not GENERATED, since
--- MERGE ... INSERT * requires the source to supply every target column.
+-- {{CATALOG}} substituted per environment. flight_key hashes icao24+callsign+route only (no date) -
+-- one row per aircraft/callsign/route, not per flight event, so QUALIFY keeps only the most
+-- recent occurrence (ORDER BY firstSeen DESC) instead of every day's instance. MATCHED rows only
+-- UPDATE when departure/arrival actually changed; a stable key with unchanged times is left alone.
+-- year/month/day stay plain columns, not GENERATED, since MERGE ... INSERT * requires the source
+-- to supply every target column.
 --
 -- Requires Databricks Runtime 16.3+ for SQL scripting (BEGIN...END/IF) - unconfirmed on Free
 -- Edition's serverless warehouse. Must run as ONE statement, not split on internal ';' -
@@ -22,9 +23,7 @@ BEGIN
             icao24,
             callsign,
             estDepartureAirport,
-            estArrivalAirport,
-            CAST(date(from_unixtime(firstSeen)) AS STRING),
-            CAST(date(from_unixtime(lastSeen)) AS STRING)
+            estArrivalAirport
           )
         ) AS flight_key,
         date(fetched_at) AS flight_date,
@@ -45,13 +44,15 @@ BEGIN
         AND estDepartureAirport IS NOT NULL
         AND estDepartureAirport != estArrivalAirport
       QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY
-          icao24, callsign, estDepartureAirport, estArrivalAirport,
-          date(from_unixtime(firstSeen)), date(from_unixtime(lastSeen))
-        ORDER BY movement_type
+        PARTITION BY icao24, callsign, estDepartureAirport, estArrivalAirport
+        ORDER BY firstSeen, movement_type
       ) = 1
     ) AS source
     ON target.flight_key = source.flight_key
+    WHEN MATCHED AND (target.departure != source.departure OR target.arrival != source.arrival)
+      THEN UPDATE SET 
+        target.departure = source.departure, 
+        target.arrival = source.arrival
     WHEN NOT MATCHED THEN INSERT *;
   ELSE
     -- Incremental: target already has data, only the newest bronze batch needs merging in.
@@ -64,9 +65,7 @@ BEGIN
             icao24,
             callsign,
             estDepartureAirport,
-            estArrivalAirport,
-            CAST(date(from_unixtime(firstSeen)) AS STRING),
-            CAST(date(from_unixtime(lastSeen)) AS STRING)
+            estArrivalAirport
           )
         ) AS flight_key,
         date(fetched_at) AS flight_date,
@@ -88,13 +87,15 @@ BEGIN
         AND estDepartureAirport != estArrivalAirport
         AND _loaded_at = (SELECT MAX(_loaded_at) FROM opensky_raw.bronze.flights_raw)
       QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY
-          icao24, callsign, estDepartureAirport, estArrivalAirport,
-          date(from_unixtime(firstSeen)), date(from_unixtime(lastSeen))
-        ORDER BY movement_type
+        PARTITION BY icao24, callsign, estDepartureAirport, estArrivalAirport
+        ORDER BY firstSeen, movement_type
       ) = 1
     ) AS source
     ON target.flight_key = source.flight_key
+    WHEN MATCHED AND (target.departure != source.departure OR target.arrival != source.arrival)
+      THEN UPDATE SET 
+        target.departure = source.departure, 
+        target.arrival = source.arrival
     WHEN NOT MATCHED THEN INSERT *;
   END IF;
 END;
