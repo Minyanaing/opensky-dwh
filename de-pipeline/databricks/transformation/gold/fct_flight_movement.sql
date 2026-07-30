@@ -1,10 +1,7 @@
--- {{CATALOG}} substituted per environment. Incremental: only silver rows from the last 3 days, not
--- full history. Must run after the dim_*.sql rebuilds (this file has no execution-order
--- enforcement of its own).
--- FLAG: FKs resolve against each dim's is_current row at merge time, not point-in-time as of
--- departure - revisit if that distinction matters.
--- FLAG: 3-day lookback assumes departure/arrival changes are re-observed within 3 days; a gap
--- wider than that would silently skip the update.
+-- {{CATALOG}} substituted per environment. Must run after the dim_*.sql rebuilds (no
+-- execution-order enforcement of its own).
+-- FLAG: FKs resolve against each dim's is_current row, not point-in-time as of departure.
+-- FLAG: a gap wider than 3 days silently skips the update.
 MERGE INTO {{CATALOG}}.gold_flights.fct_flight_movement AS target
 USING (
   SELECT
