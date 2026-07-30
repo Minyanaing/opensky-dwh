@@ -1,7 +1,8 @@
 -- {{CATALOG}} substituted per environment. Requires Databricks Runtime 16.3+ (BEGIN...END/DECLARE).
 -- FLAG: a gap wider than lookback_days silently skips a reschedule.
--- FLAG: FKs resolve against each dim's is_current row at merge time, not point-in-time as of
--- departure.
+-- FKs resolve against whichever dim version was effective at departure time (effective_start/
+-- effective_end), not each dim's is_current row - point-in-time correct even if a dim changed
+-- since the flight happened.
 --
 -- Unlike silver (which UPDATEs departure/arrival in place), gold keeps history: when the same
 -- flight_key's departure/arrival changes, the old row is soft-deleted (is_deleted = true) and a
@@ -51,7 +52,13 @@ BEGIN
       QUALIFY ROW_NUMBER() OVER (PARTITION BY flight_key ORDER BY _loaded_at DESC) = 1
     )
     SELECT
-      md5(concat_ws('||', f.flight_key, CAST(f._loaded_at AS STRING))) AS flights_sk,
+      md5(
+        concat_ws(
+          '||', 
+          f.flight_key, 
+          CAST(f._loaded_at AS STRING)
+        )
+      ) AS flights_sk,
       f.flight_key,
       CAST(date_format(f.departure, 'yyyyMMdd') AS INT) AS departure_date_sk,
       hour(f.departure) * 100 + minute(f.departure) AS departure_time_sk,
@@ -70,10 +77,22 @@ BEGIN
       f._loaded_at
     FROM {{CATALOG}}.silver_flights.flights AS f
     LEFT JOIN latest_gold AS g ON g.flight_key = f.flight_key
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_aircraft AS ac ON ac.icao24 = f.icao24 AND ac.is_current
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_callsign AS cs ON cs.callsign = f.callsign AND cs.is_current
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_airport AS orig ON orig.icao = f.estDepartureAirport AND orig.is_current
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_airport AS dest ON dest.icao = f.estArrivalAirport AND dest.is_current
+    LEFT JOIN {{CATALOG}}.gold_flights.dim_aircraft AS ac
+      ON ac.icao24 = f.icao24
+      AND f.departure >= ac.effective_start
+      AND (ac.effective_end IS NULL OR f.departure < ac.effective_end)
+    LEFT JOIN {{CATALOG}}.gold_flights.dim_callsign AS cs
+      ON cs.callsign = f.callsign
+      AND f.departure >= cs.effective_start
+      AND (cs.effective_end IS NULL OR f.departure < cs.effective_end)
+    LEFT JOIN {{CATALOG}}.gold_flights.dim_airport AS orig
+      ON orig.icao = f.estDepartureAirport
+      AND f.departure >= orig.effective_start
+      AND (orig.effective_end IS NULL OR f.departure < orig.effective_end)
+    LEFT JOIN {{CATALOG}}.gold_flights.dim_airport AS dest
+      ON dest.icao = f.estArrivalAirport
+      AND f.departure >= dest.effective_start
+      AND (dest.effective_end IS NULL OR f.departure < dest.effective_end)
     WHERE f._loaded_at >= cutoff
       AND (g.flight_key IS NULL OR g.departure != f.departure OR g.arrival != f.arrival)
   ) AS source
