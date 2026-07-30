@@ -6,10 +6,18 @@
 -- incoming silver rows via LEAD, so every version in the window is tracked, not just the latest.
 BEGIN
   DECLARE lookback_days INT DEFAULT 3;
+  DECLARE row_count BIGINT DEFAULT 0;
   DECLARE cutoff TIMESTAMP;
-  SET cutoff = (
-    SELECT MAX(_loaded_at) FROM {{CATALOG}}.silver_flights.airports
-  ) - make_interval(0, 0, 0, lookback_days, 0, 0, 0);
+
+  SET row_count = (SELECT COUNT(*) FROM {{CATALOG}}.gold_flights.dim_airport);
+
+  IF row_count = 0 THEN
+    SET cutoff = TIMESTAMP('1970-01-01 00:00:00');
+  ELSE
+    SET cutoff = (
+      SELECT MAX(_loaded_at) FROM {{CATALOG}}.silver_flights.airports
+    ) - make_interval(0, 0, 0, lookback_days, 0, 0, 0);
+  END IF;
 
   MERGE INTO {{CATALOG}}.gold_flights.dim_airport AS target
   USING (
