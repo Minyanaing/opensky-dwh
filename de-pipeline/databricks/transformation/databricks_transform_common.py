@@ -1,7 +1,8 @@
 """Reusable Databricks Jobs deploy helpers - auth, {{CATALOG}}-substituting upload, sequential-task
-orchestration, idempotent create-or-update. Shared by databricks_silver.py and databricks_gold.py
-so neither duplicates this boilerplate."""
+orchestration, idempotent create-or-update, and the shared deploy_layer/layer_deploy_cli driver.
+Shared by databricks_silver.py and databricks_gold.py so neither duplicates this boilerplate."""
 
+import argparse
 import logging
 import os
 from pathlib import Path
@@ -95,3 +96,44 @@ def create_or_update_job(client, job_name, tasks, schedule):
     response = client.jobs.create(name=job_name, tasks=tasks, schedule=schedule)
     logger.info("Created job %s (id=%s)", job_name, response.job_id)
     return response.job_id
+
+
+def deploy_layer(
+    http_path, catalog, task_order, sql_dir, job_name_prefix, workspace_root, cron_schedule, timezone_id,
+    file_prefix="",
+):
+    """Shared driver for a layer deploy script: uploads each task_order entry's SQL file (per
+    catalog), chains them sequentially, and creates/updates the resulting scheduled Job.
+    file_prefix matches each file's actual name, e.g. "silver_" for silver_flights.sql - gold/master
+    files have no prefix (dim_airline.sql, date.sql)."""
+    client = get_workspace_client()
+    warehouse_id = warehouse_id_from_http_path(http_path)
+
+    sql_paths = {
+        table: upload_sql(
+            client,
+            sql_dir / f"{file_prefix}{table}.sql",
+            f"{workspace_root}/{catalog}/{file_prefix}{table}.sql",
+            catalog,
+        )
+        for table in task_order
+    }
+    tasks = build_sequential_tasks(warehouse_id, task_order, sql_paths)
+    schedule = jobs.CronSchedule(quartz_cron_expression=cron_schedule, timezone_id=timezone_id)
+    job_id = create_or_update_job(client, f"{job_name_prefix}-{catalog}", tasks, schedule)
+
+    logger.info("Job %s ready - runs %s (%s)", job_id, " -> ".join(task_order), catalog)
+    return job_id
+
+
+def layer_deploy_cli(description):
+    """Shared CLI parser for a layer deploy script - every one just needs --catalog."""
+    parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--catalog",
+        type=str,
+        required=True,
+        choices=CATALOGS,
+        help="Which environment catalog to deploy the job for",
+    )
+    return parser.parse_args()

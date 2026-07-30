@@ -1,27 +1,15 @@
 """Deploys the master transform Job: uploads master/*.sql (per catalog) and schedules them as a
 sequential task chain, once a year (00:00 Asia/Bangkok, Jan 1) - deployed before 2027-01-01, so
-that's naturally its first run. Reusable helpers live in databricks_transform_common.py."""
+that's naturally its first run. Reusable driver logic lives in databricks_transform_common.py."""
 
-import argparse
 import logging
 from pathlib import Path
 
-from databricks.sdk.service import jobs
 from dotenv import load_dotenv
 
-from databricks_transform_common import (
-    CATALOGS,
-    build_sequential_tasks,
-    create_or_update_job,
-    get_workspace_client,
-    require_env,
-    upload_sql,
-    warehouse_id_from_http_path,
-)
+from databricks_transform_common import deploy_layer, layer_deploy_cli, require_env
 
 load_dotenv()
-
-logger = logging.getLogger(__name__)
 
 TASK_ORDER = ["date", "time"]
 
@@ -33,47 +21,14 @@ TIMEZONE_ID = "Asia/Bangkok"
 
 
 def run(http_path, catalog):
-    client = get_workspace_client()
-    warehouse_id = warehouse_id_from_http_path(http_path)
-
-    sql_paths = {
-        table: upload_sql(
-            client,
-            SQL_DIR / f"{table}.sql",
-            f"{WORKSPACE_ROOT}/{catalog}/{table}.sql",
-            catalog,
-        )
-        for table in TASK_ORDER
-    }
-    tasks = build_sequential_tasks(warehouse_id, TASK_ORDER, sql_paths)
-    schedule = jobs.CronSchedule(quartz_cron_expression=CRON_SCHEDULE, timezone_id=TIMEZONE_ID)
-    job_id = create_or_update_job(client, f"{JOB_NAME_PREFIX}-{catalog}", tasks, schedule)
-
-    logger.info(
-        "Job %s ready - runs %s yearly on Jan 1, 00:00 %s (%s)",
-        job_id,
-        " -> ".join(TASK_ORDER),
-        TIMEZONE_ID,
-        catalog,
+    return deploy_layer(
+        http_path, catalog, TASK_ORDER, SQL_DIR, JOB_NAME_PREFIX, WORKSPACE_ROOT, CRON_SCHEDULE, TIMEZONE_ID
     )
-    return job_id
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "--catalog",
-        type=str,
-        required=True,
-        choices=CATALOGS,
-        help="Which environment catalog to deploy the master job for",
-    )
-    return parser.parse_args()
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    args = parse_args()
+    args = layer_deploy_cli(__doc__)
     run(require_env("DATABRICKS_HTTP_PATH"), args.catalog)
 
 
