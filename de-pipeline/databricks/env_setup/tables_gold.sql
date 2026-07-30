@@ -1,9 +1,14 @@
 -- {{CATALOG}} substituted per environment by env_setup.py --catalog.
 
+-- flights_sk is the row PK (flight_key alone repeats across reschedules) - see
+-- transformation/gold/fct_flight_movement.sql for the soft-delete/reschedule logic.
 CREATE TABLE IF NOT EXISTS {{CATALOG}}.gold_flights.fct_flight_movement (
+    `flights_sk` STRING,
     `flight_key` STRING,
-    `date_sk` INT,
-    `time_sk` INT,
+    `departure_date_sk` INT,
+    `departure_time_sk` INT,
+    `arrival_date_sk` INT,
+    `arrival_time_sk` INT,
     `aircraft_sk` STRING,
     `callsign_sk` STRING,
     `origin_airport_sk` STRING,
@@ -12,6 +17,8 @@ CREATE TABLE IF NOT EXISTS {{CATALOG}}.gold_flights.fct_flight_movement (
     `arrival` TIMESTAMP,
     `movement_type` STRING,
     `flight_duration_minutes` INT,
+    `record_type` STRING,
+    `is_deleted` BOOLEAN,
     `_loaded_at` TIMESTAMP
 ) USING DELTA;
 
