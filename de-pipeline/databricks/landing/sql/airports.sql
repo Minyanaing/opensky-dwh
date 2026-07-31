@@ -1,10 +1,10 @@
 COPY INTO opensky_raw.bronze.airports
 FROM (
   SELECT
-    icao,
-    iata,
-    name,
-    country,
+    TRIM(icao) AS icao,
+    TRIM(iata) AS iata,
+    TRIM(name) AS name,
+    TRIM(country) AS country,
     CAST(lat AS DOUBLE) AS lat,
     CAST(lon AS DOUBLE) AS lon,
     current_timestamp() AS _loaded_at
