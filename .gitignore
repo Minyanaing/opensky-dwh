@@ -11,9 +11,12 @@ de-pipeline/ingestion/data/*
 !de-pipeline/ingestion/data/*_old.csv
 de-pipeline/ingestion/*.log
 
+de-pipeline/databricks/landing/sql/trim_*
+
 # Databricks credentials
 de-pipeline/.keys/
 de-pipeline/databricks/.env
 
 # Snowflake credentials (private key)
 de-pipeline/snowflake/.env
+

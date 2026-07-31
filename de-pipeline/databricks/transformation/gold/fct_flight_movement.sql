@@ -1,16 +1,13 @@
 -- {{CATALOG}} substituted per environment. Requires Databricks Runtime 16.3+ (BEGIN...END/DECLARE).
 -- FLAG: a gap wider than lookback_days silently skips a reschedule.
--- FKs resolve against whichever dim version was effective at departure time (effective_start/
--- effective_end), not each dim's is_current row - point-in-time correct even if a dim changed
--- since the flight happened.
---
--- Unlike silver (which UPDATEs departure/arrival in place), gold keeps history: when the same
--- flight_key's departure/arrival changes, the old row is soft-deleted (is_deleted = true) and a
--- new row is inserted with record_type = 'RESCHEDULE'. latest_gold (ROW_NUMBER by _loaded_at, not
--- filtered by is_deleted) is what both statements compare against - it still finds the
--- just-soft-deleted row's values in statement 2, since flipping is_deleted doesn't change
--- _loaded_at, so ORIGINAL vs RESCHEDULE classification isn't affected by statement 1 having
--- already run.
+-- FKs join on point-in-time (effective_start/effective_end), not is_current; is_earliest lets a
+-- flight predating a dim's first known version still match it instead of going unmatched.
+-- f.callsign is TRIM()'d for the callsign join - OpenSky's raw callsign is space-padded but
+-- dim_callsign's isn't (distinct_callsigns() strips it before adsbdb lookup).
+-- Gold keeps history unlike silver: a changed flight_key soft-deletes the old row and inserts a
+-- new one as record_type = 'RESCHEDULE'. latest_gold ignores is_deleted on purpose, since flipping
+-- it doesn't change _loaded_at - so ORIGINAL/RESCHEDULE classification is unaffected by statement
+-- 1 having already run.
 BEGIN
   DECLARE lookback_days INT DEFAULT 3;
   DECLARE row_count BIGINT DEFAULT 0;
@@ -50,12 +47,24 @@ BEGIN
       SELECT flight_key, departure, arrival
       FROM {{CATALOG}}.gold_flights.fct_flight_movement
       QUALIFY ROW_NUMBER() OVER (PARTITION BY flight_key ORDER BY _loaded_at DESC) = 1
+    ),
+    aircraft_ranged AS (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY icao24 ORDER BY effective_start) = 1 AS is_earliest
+      FROM {{CATALOG}}.gold_flights.dim_aircraft
+    ),
+    callsign_ranged AS (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY callsign ORDER BY effective_start) = 1 AS is_earliest
+      FROM {{CATALOG}}.gold_flights.dim_callsign
+    ),
+    airport_ranged AS (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY icao ORDER BY effective_start) = 1 AS is_earliest
+      FROM {{CATALOG}}.gold_flights.dim_airport
     )
     SELECT
       md5(
         concat_ws(
-          '||', 
-          f.flight_key, 
+          '||',
+          f.flight_key,
           CAST(f._loaded_at AS STRING)
         )
       ) AS flights_sk,
@@ -77,22 +86,30 @@ BEGIN
       f._loaded_at
     FROM {{CATALOG}}.silver_flights.flights AS f
     LEFT JOIN latest_gold AS g ON g.flight_key = f.flight_key
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_aircraft AS ac
+    LEFT JOIN aircraft_ranged AS ac
       ON ac.icao24 = f.icao24
-      AND f.departure >= ac.effective_start
-      AND (ac.effective_end IS NULL OR f.departure < ac.effective_end)
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_callsign AS cs
+      AND (
+        (f.departure >= ac.effective_start AND (ac.effective_end IS NULL OR f.departure < ac.effective_end))
+        OR (ac.is_earliest AND f.departure < ac.effective_start)
+      )
+    LEFT JOIN callsign_ranged AS cs
       ON cs.callsign = f.callsign
-      AND f.departure >= cs.effective_start
-      AND (cs.effective_end IS NULL OR f.departure < cs.effective_end)
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_airport AS orig
+      AND (
+        (f.departure >= cs.effective_start AND (cs.effective_end IS NULL OR f.departure < cs.effective_end))
+        OR (cs.is_earliest AND f.departure < cs.effective_start)
+      )
+    LEFT JOIN airport_ranged AS orig
       ON orig.icao = f.estDepartureAirport
-      AND f.departure >= orig.effective_start
-      AND (orig.effective_end IS NULL OR f.departure < orig.effective_end)
-    LEFT JOIN {{CATALOG}}.gold_flights.dim_airport AS dest
+      AND (
+        (f.departure >= orig.effective_start AND (orig.effective_end IS NULL OR f.departure < orig.effective_end))
+        OR (orig.is_earliest AND f.departure < orig.effective_start)
+      )
+    LEFT JOIN airport_ranged AS dest
       ON dest.icao = f.estArrivalAirport
-      AND f.departure >= dest.effective_start
-      AND (dest.effective_end IS NULL OR f.departure < dest.effective_end)
+      AND (
+        (f.departure >= dest.effective_start AND (dest.effective_end IS NULL OR f.departure < dest.effective_end))
+        OR (dest.is_earliest AND f.departure < dest.effective_start)
+      )
     WHERE f._loaded_at >= cutoff
       AND (g.flight_key IS NULL OR g.departure != f.departure OR g.arrival != f.arrival)
   ) AS source
