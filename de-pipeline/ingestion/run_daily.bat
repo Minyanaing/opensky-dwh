@@ -17,30 +17,30 @@ call .venv\Scripts\activate.bat
 
 echo == >> ingest_daily.log
 echo ---- ingest_opensky.py ---- >> ingest_daily.log
-python ingest_opensky.py >> ingest_daily.log 2>&1
+python pipeline\ingest_opensky.py >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- export_airports.py ---- >> ingest_daily.log
-python export_airports.py >> ingest_daily.log 2>&1
+python pipeline\export_airports.py >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- export_callsigns.py ---- >> ingest_daily.log
-python export_callsigns.py >> ingest_daily.log 2>&1
+python pipeline\export_callsigns.py >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- ingest_adsbdb.py ---- >> ingest_daily.log
-python ingest_adsbdb.py >> ingest_daily.log 2>&1
+python pipeline\ingest_adsbdb.py >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- ingest_airports.py ---- >> ingest_daily.log
-python ingest_airports.py >> ingest_daily.log 2>&1
+python pipeline\ingest_airports.py >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- load_to_databricks.py ---- >> ingest_daily.log
-python load_to_databricks.py flights_raw airlines airports callsigns airport_data >> ingest_daily.log 2>&1
+python loaders\load_to_databricks.py flights_raw airlines airports callsigns airport_data >> ingest_daily.log 2>&1
 
 echo == >> ingest_daily.log
 echo ---- load_to_snowflake.py ---- >> ingest_daily.log
-python load_to_snowflake.py flights_raw airlines airports callsigns >> ingest_daily.log 2>&1
+python loaders\load_to_snowflake.py flights_raw airlines airports callsigns >> ingest_daily.log 2>&1
 
 echo ==========###################################========== >> ingest_daily.log

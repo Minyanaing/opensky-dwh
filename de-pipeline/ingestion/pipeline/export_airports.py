@@ -1,18 +1,21 @@
-"""Rolls the previous run's callsigns.csv (last run's "new" delta) into callsigns_old.csv, then
-extracts distinct callsigns from flights_raw.csv and overwrites callsigns.csv with only the ones
+"""Rolls the previous run's airports.csv (last run's "new" delta) into airports_old.csv, then
+extracts distinct airports from flights_raw.csv and overwrites airports.csv with only the ones
 not already in that accumulated history.
 
-Split out from ingest_opensky.py so a problem here (or in export_airports.py) doesn't require
+Split out from ingest_opensky.py so a problem here (or in export_callsigns.py) doesn't require
 re-fetching from OpenSky - re-run this on its own against the existing flights_raw.csv.
 """
 
 import argparse
 import csv
 import logging
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+
 import config
-from transforms import append_column, distinct_callsigns, export_new_only
+from transforms import append_column, distinct_airports, export_new_only
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +31,14 @@ def run(flights_csv_path, output_dir):
 
     flights = _read_flights(flights_csv_path)
 
-    callsigns_path = out_dir / "callsigns.csv"
-    callsigns_old_path = out_dir / "callsigns_old.csv"
-    append_column(callsigns_path, callsigns_old_path, "callsign")
+    airports_path = out_dir / "airports.csv"
+    airports_old_path = out_dir / "airports_old.csv"
+    append_column(airports_path, airports_old_path, "icao")
 
-    new_callsigns = export_new_only(distinct_callsigns(flights), callsigns_old_path, callsigns_path, "callsign")
+    new_airports = export_new_only(distinct_airports(flights), airports_old_path, airports_path, "icao")
 
-    logger.info("Wrote %s new callsign(s) -> %s", len(new_callsigns), callsigns_path)
-    return {"callsigns": callsigns_path}
+    logger.info("Wrote %s new airport(s) -> %s", len(new_airports), airports_path)
+    return {"airports": airports_path}
 
 
 def parse_args():
@@ -50,7 +53,7 @@ def parse_args():
         "--output-dir",
         type=str,
         default=str(config.OUTPUT_DIR),
-        help="Directory to read/write callsigns.csv/callsigns_old.csv (default: %(default)s)",
+        help="Directory to read/write airports.csv/airports_old.csv (default: %(default)s)",
     )
     return parser.parse_args()
 
