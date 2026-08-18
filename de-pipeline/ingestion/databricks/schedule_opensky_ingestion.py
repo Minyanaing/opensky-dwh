@@ -2,16 +2,15 @@
 Asia/Bangkok time, with --land-to-volume so the run lands CSVs in the Volume. Run
 deploy_opensky_ingestion.py first - this only wires up the schedule, it doesn't upload code.
 
-Untested assumption: a plain Python-file task needs no cluster/warehouse spec on Free Edition
-serverless job compute, same as this project's existing SQL-warehouse jobs needed no cluster.
-Verify the first run in the Databricks Jobs UI.
+Serverless Python tasks require a Job-level environment (pip dependencies), referenced by the
+task's environment_key - unlike this project's SQL-warehouse jobs, which needed no such spec.
 """
 
 import logging
 import os
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service import jobs
+from databricks.sdk.service import compute, jobs
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,6 +23,8 @@ PYTHON_FILE = f"{WORKSPACE_DIR}/databricks/databricks_ingest.py"
 CRON_SCHEDULE = "0 0 10 * * ?"
 TIMEZONE_ID = "Asia/Bangkok"
 TASK_PARAMETERS = ["--land-to-volume"]
+ENVIRONMENT_KEY = "opensky_ingestion_env"
+ENVIRONMENT_DEPENDENCIES = ["requests", "python-dotenv", "databricks-sdk"]
 
 
 def _require_env(name):
@@ -62,6 +63,7 @@ def _existing_job_id(client, job_name):
 def build_task():
     return jobs.Task(
         task_key="run_ingestion",
+        environment_key=ENVIRONMENT_KEY,
         spark_python_task=jobs.SparkPythonTask(
             python_file=PYTHON_FILE,
             source=jobs.Source.WORKSPACE,
@@ -70,20 +72,28 @@ def build_task():
     )
 
 
+def build_environment():
+    return jobs.JobEnvironment(
+        environment_key=ENVIRONMENT_KEY,
+        spec=compute.Environment(environment_version="2", dependencies=ENVIRONMENT_DEPENDENCIES),
+    )
+
+
 def create_or_update_job(client):
     task = build_task()
+    environment = build_environment()
     schedule = jobs.CronSchedule(quartz_cron_expression=CRON_SCHEDULE, timezone_id=TIMEZONE_ID)
 
     existing_id = _existing_job_id(client, JOB_NAME)
     if existing_id:
         client.jobs.reset(
             job_id=existing_id,
-            new_settings=jobs.JobSettings(name=JOB_NAME, tasks=[task], schedule=schedule),
+            new_settings=jobs.JobSettings(name=JOB_NAME, tasks=[task], environments=[environment], schedule=schedule),
         )
         logger.info("Updated existing job %s (id=%s)", JOB_NAME, existing_id)
         return existing_id
 
-    response = client.jobs.create(name=JOB_NAME, tasks=[task], schedule=schedule)
+    response = client.jobs.create(name=JOB_NAME, tasks=[task], environments=[environment], schedule=schedule)
     logger.info("Created job %s (id=%s)", JOB_NAME, response.job_id)
     return response.job_id
 
