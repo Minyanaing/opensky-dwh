@@ -2,7 +2,7 @@ name: Databricks ingestion deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, main_qa, main_prod]
     paths:
       - "de-pipeline/ingestion/**"
   workflow_dispatch: {}
@@ -10,7 +10,7 @@ on:
 jobs:
   databricks-ingestion-deploy:
     runs-on: ubuntu-latest
-    environment: infra
+    environment: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,3 +29,11 @@ jobs:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: python databricks/deploy_opensky_ingestion.py
+
+      - name: Create/update daily ingestion schedule
+        working-directory: de-pipeline/ingestion
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python databricks/schedule_opensky_ingestion.py
