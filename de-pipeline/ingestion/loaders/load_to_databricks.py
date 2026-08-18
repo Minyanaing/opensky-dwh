@@ -22,10 +22,13 @@ COPY INTO, run manually or on a schedule - see README.md.
 import argparse
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 

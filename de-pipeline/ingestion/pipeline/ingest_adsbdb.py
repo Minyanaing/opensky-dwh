@@ -16,10 +16,13 @@ Output is flat CSV - only the fields useful downstream, not the full nested API 
 import argparse
 import csv
 import logging
+import sys
 import time
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 from transforms import utc_now_iso

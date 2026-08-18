@@ -16,11 +16,14 @@ load_to_snowflake.py upload these files as a separate step.
 import argparse
 import csv
 import logging
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 from fetch_data import TokenManager, chunk_window, fetch_arrivals, fetch_departures

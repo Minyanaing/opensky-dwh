@@ -4,8 +4,11 @@ Not part of the scheduled ingestion - for ad hoc inspection of an icao24 seen in
 import argparse
 import json
 import logging
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 from fetch_data import TokenManager, chunk_window, fetch_aircraft_flights
