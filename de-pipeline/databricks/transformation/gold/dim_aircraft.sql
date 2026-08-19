@@ -6,6 +6,7 @@ BEGIN
   DECLARE lookback_days INT DEFAULT 3;
   DECLARE row_count BIGINT DEFAULT 0;
   DECLARE cutoff TIMESTAMP;
+  DECLARE open_ended_end TIMESTAMP DEFAULT TIMESTAMP('9999-12-12 00:00:00');
 
   SET row_count = (SELECT COUNT(*) FROM {{CATALOG}}.gold_flights.dim_aircraft);
 
@@ -79,7 +80,7 @@ BEGIN
       icao24, type, icao_type, manufacturer, registration, registered_owner,
       registered_owner_country,
       _loaded_at AS effective_start,
-      next_loaded_at AS effective_end,
+      COALESCE(next_loaded_at, open_ended_end) AS effective_end,
       next_loaded_at IS NULL AS is_current
     FROM scd
     WHERE NOT is_existing
