@@ -1,9 +1,11 @@
-"""Creates (or updates) a Databricks Job that runs databricks_ingest.py daily at 10:00
-Asia/Bangkok time, with --land-to-volume so the run lands CSVs in the Volume. Run
-deploy_opensky_ingestion.py first - this only wires up the schedule, it doesn't upload code.
+"""Creates (or updates) a Databricks Job that runs run_ingestion_notebook.py daily at 10:00
+Asia/Bangkok time - the notebook itself calls run_all(land_volume=True) and logs to a file in
+the landing Volume (see run_ingestion_notebook.py). Run deploy_opensky_ingestion.py first - this
+only wires up the schedule, it doesn't upload code.
 
-Serverless Python tasks require a Job-level environment (pip dependencies), referenced by the
-task's environment_key - unlike this project's SQL-warehouse jobs, which needed no such spec.
+Serverless notebook tasks still declare a Job-level environment (pip dependencies), referenced
+by the task's environment_key - kept here even though the notebook also does its own %pip
+install, since it's unconfirmed whether that alone satisfies a serverless notebook task.
 """
 
 import logging
@@ -19,10 +21,9 @@ logger = logging.getLogger(__name__)
 
 JOB_NAME = "opensky-ingestion-daily"
 WORKSPACE_DIR = "/Shared/opensky/ingestion"
-PYTHON_FILE = f"{WORKSPACE_DIR}/databricks/databricks_ingest.py"
+NOTEBOOK_PATH = f"{WORKSPACE_DIR}/databricks/run_ingestion_notebook"
 CRON_SCHEDULE = "0 0 10 * * ?"
 TIMEZONE_ID = "Asia/Bangkok"
-TASK_PARAMETERS = ["--land-to-volume"]
 ENVIRONMENT_KEY = "opensky_ingestion_env"
 ENVIRONMENT_DEPENDENCIES = ["requests", "python-dotenv", "databricks-sdk"]
 
@@ -64,10 +65,9 @@ def build_task():
     return jobs.Task(
         task_key="run_ingestion",
         environment_key=ENVIRONMENT_KEY,
-        spark_python_task=jobs.SparkPythonTask(
-            python_file=PYTHON_FILE,
+        notebook_task=jobs.NotebookTask(
+            notebook_path=NOTEBOOK_PATH,
             source=jobs.Source.WORKSPACE,
-            parameters=TASK_PARAMETERS,
         ),
     )
 

@@ -12,7 +12,7 @@ import posixpath
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.workspace import ImportFormat
+from databricks.sdk.service.workspace import ImportFormat, Language
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -34,6 +34,11 @@ REQUIRED_FILES = [
     "loaders/load_to_databricks.py",
     "databricks/databricks_ingest.py",
 ]
+
+# Uploaded as an actual Notebook (ImportFormat.SOURCE), not a plain workspace file - the .py
+# suffix is dropped from the workspace path, matching how Databricks stores notebook objects.
+NOTEBOOK_FILE = "databricks/run_ingestion_notebook.py"
+NOTEBOOK_WORKSPACE_PATH = "databricks/run_ingestion_notebook"
 
 
 def _require_env(name):
@@ -72,9 +77,21 @@ def upload_file(client, relative_path, root_dir=ROOT_DIR, workspace_dir=WORKSPAC
     return remote_path
 
 
+def upload_notebook(client, root_dir=ROOT_DIR, workspace_dir=WORKSPACE_DIR):
+    local_path = root_dir / NOTEBOOK_FILE
+    remote_path = posixpath.join(workspace_dir, NOTEBOOK_WORKSPACE_PATH)
+    client.workspace.mkdirs(posixpath.dirname(remote_path))
+    client.workspace.upload(
+        remote_path, local_path.read_bytes(), format=ImportFormat.SOURCE, language=Language.PYTHON, overwrite=True
+    )
+    logger.info("Uploaded %s -> %s (notebook)", local_path, remote_path)
+    return remote_path
+
+
 def run(files=REQUIRED_FILES, root_dir=ROOT_DIR, workspace_dir=WORKSPACE_DIR):
     client = get_workspace_client()
     uploaded = [upload_file(client, f, root_dir, workspace_dir) for f in files]
+    uploaded.append(upload_notebook(client, root_dir, workspace_dir))
     logger.info("Uploaded %s file(s) -> %s", len(uploaded), workspace_dir)
     return uploaded
 
