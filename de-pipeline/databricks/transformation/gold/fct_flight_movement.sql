@@ -28,6 +28,7 @@ BEGIN
     WITH latest_gold AS (
       SELECT flight_key, departure, arrival, _loaded_at
       FROM {{CATALOG}}.gold_flights.fct_flight_movement
+      WHERE f._loaded_at >= cutoff
       QUALIFY ROW_NUMBER() OVER (PARTITION BY flight_key ORDER BY _loaded_at DESC) = 1
     )
     SELECT g.flight_key, g._loaded_at AS target_loaded_at
@@ -46,6 +47,7 @@ BEGIN
     WITH latest_gold AS (
       SELECT flight_key, departure, arrival
       FROM {{CATALOG}}.gold_flights.fct_flight_movement
+      WHERE f._loaded_at >= cutoff
       QUALIFY ROW_NUMBER() OVER (PARTITION BY flight_key ORDER BY _loaded_at DESC) = 1
     ),
     aircraft_ranged AS (
