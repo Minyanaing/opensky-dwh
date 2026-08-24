@@ -6,9 +6,8 @@
 CREATE CATALOG IF NOT EXISTS {{CATALOG}};
 CREATE SCHEMA IF NOT EXISTS {{CATALOG}}.silver_flights;
 CREATE SCHEMA IF NOT EXISTS {{CATALOG}}.gold_flights;
+CREATE SCHEMA IF NOT EXISTS {{CATALOG}}.master;
 
--- Optional: full access for a human account. Skipped if ADMIN_PRINCIPAL is unset.
--- MANAGE is listed separately - ALL PRIVILEGES deliberately excludes it (anti-privilege-escalation),
--- but without it ADMIN_PRINCIPAL can't DROP/ALTER objects it doesn't own.
+-- full access for a human account. Skipped if ADMIN_PRINCIPAL is unset.
 GRANT ALL PRIVILEGES, MANAGE ON CATALOG {{CATALOG}} TO {{ADMIN_PRINCIPAL}};
 

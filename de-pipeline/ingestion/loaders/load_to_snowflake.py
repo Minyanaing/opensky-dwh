@@ -18,6 +18,7 @@ import argparse
 import logging
 import os
 import shutil
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,8 @@ import snowflake.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from dotenv import find_dotenv, load_dotenv
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 

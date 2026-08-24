@@ -1,0 +1,51 @@
+name: Databricks master tables destroy
+
+# Destructive - drops the master (date/time) tables in whichever environment catalog the branch
+# this is dispatched from maps to. workflow_dispatch only, deliberately no push trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'destroy' to confirm - deletes the master date/time tables for this branch's environment"
+        required: true
+
+jobs:
+  master-destroy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+      - name: Check confirmation input
+        if: ${{ github.event.inputs.confirm != 'destroy' }}
+        run: |
+          echo "Confirmation input must be exactly 'destroy' - aborting."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/databricks
+        run: pip install -r requirements.txt
+
+      - name: Resolve environment from branch
+        id: resolve
+        run: |
+          case "${{ github.ref_name }}" in
+            main) echo "env=dev" >> "$GITHUB_OUTPUT" ;;
+            main_qa) echo "env=qa" >> "$GITHUB_OUTPUT" ;;
+            main_prod) echo "env=prod" >> "$GITHUB_OUTPUT" ;;
+            *) echo "No environment mapping for branch '${{ github.ref_name }}'"; exit 1 ;;
+          esac
+
+      - name: Destroy Master tables
+        working-directory: de-pipeline/databricks/env_setup
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python env_setup.py --sql-file destroy_master.sql --catalog ${{ steps.resolve.outputs.env }}_catalog

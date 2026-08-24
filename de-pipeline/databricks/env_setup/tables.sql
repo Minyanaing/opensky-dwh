@@ -1,5 +1,0 @@
--- Silver/Gold table definitions - written once here, identical across dev_catalog/qa_catalog/
--- prod_catalog. Use the {{CATALOG}} placeholder instead of hardcoding a catalog name (e.g.
--- CREATE TABLE {{CATALOG}}.silver_flights.stg_flight_movement ...) - env_setup.py --catalog
--- <dev_catalog|qa_catalog|prod_catalog> substitutes it before applying, so running this file
--- once per environment produces identical tables in each. Not yet defined.
