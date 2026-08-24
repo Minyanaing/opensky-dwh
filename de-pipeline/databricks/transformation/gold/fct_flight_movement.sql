@@ -1,13 +1,8 @@
 -- {{CATALOG}} substituted per environment. Requires Databricks Runtime 16.3+ (BEGIN...END/DECLARE).
 -- FLAG: a gap wider than lookback_days silently skips a reschedule.
--- FKs join on point-in-time (effective_start/effective_end), not is_current; is_earliest lets a
--- flight predating a dim's first known version still match it instead of going unmatched.
--- f.callsign is TRIM()'d for the callsign join - OpenSky's raw callsign is space-padded but
--- dim_callsign's isn't (distinct_callsigns() strips it before adsbdb lookup).
--- Gold keeps history unlike silver: a changed flight_key soft-deletes the old row and inserts a
--- new one as record_type = 'RESCHEDULE'. latest_gold ignores is_deleted on purpose, since flipping
--- it doesn't change _loaded_at - so ORIGINAL/RESCHEDULE classification is unaffected by statement
--- 1 having already run.
+-- FKs join point-in-time (effective_start/effective_end, not is_current); is_earliest lets a flight predating a dim's first version still match.
+-- f.callsign is TRIM()'d - OpenSky's raw callsign is space-padded, dim_callsign's isn't.
+-- A changed flight_key soft-deletes the old row + inserts a RESCHEDULE row; latest_gold ignores is_deleted since flipping it doesn't change _loaded_at.
 BEGIN
   DECLARE lookback_days INT DEFAULT 3;
   DECLARE row_count BIGINT DEFAULT 0;

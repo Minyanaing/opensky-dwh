@@ -1,15 +1,6 @@
 -- {{CATALOG}} substituted per environment. Requires Databricks Runtime 16.3+ (BEGIN...END/DECLARE).
--- Lookback: dim_aircraft empty -> v_cutoff = epoch (all of silver); otherwise v_cutoff =
--- MAX(_loaded_at) (only the latest silver batch) - silver is content-hash deduped, so anything
--- at that batch is guaranteed genuinely new/changed content. ROW_NUMBER dedupes to one row per
--- icao24 (defensive - also prevents join fan-out below).
--- gold doesn't persist aircraft_key, so target's hash is recomputed at runtime with the same
--- formula silver used, and compared directly against source.aircraft_key (already computed by
--- silver) - one comparison instead of six, and concat_ws's null-skipping means a field going
--- from NULL to a real value still changes the resulting hash, no COALESCE needed.
--- Two statements: MERGE closes an existing current row when its hash changed (unchanged content
--- simply matches no WHEN clause - a no-op); INSERT adds the fresh row for anything not already
--- reflected as an unchanged current row - covers both a brand-new icao24 and a change.
+-- v_cutoff = epoch if empty, else silver's latest batch only (content-hash deduped, so always new/changed).
+-- Target's hash is recomputed at runtime (gold doesn't persist aircraft_key) vs source.aircraft_key; concat_ws skips NULLs so no COALESCE needed.
 BEGIN
   DECLARE v_row_count BIGINT DEFAULT 0;
   DECLARE v_cutoff TIMESTAMP;
