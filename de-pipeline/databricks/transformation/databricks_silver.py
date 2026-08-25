@@ -1,6 +1,6 @@
 """Deploys the silver transform Job: uploads silver/*.sql (per catalog) and schedules them as a
-sequential task chain, 11:00 Asia/Bangkok daily. Reusable driver logic lives in
-databricks_transform_common.py."""
+sequential task chain. Each catalog gets its own time (see CRON_SCHEDULE_BY_CATALOG) so
+dev/qa/prod don't all fire at once. Reusable driver logic lives in databricks_transform_common.py."""
 
 import logging
 from pathlib import Path
@@ -16,13 +16,18 @@ TASK_ORDER = ["flights", "callsigns", "airlines", "airports", "aircrafts"]
 SQL_DIR = Path(__file__).parent / "silver"
 JOB_NAME_PREFIX = "opensky-silver-transform"
 WORKSPACE_ROOT = "/Shared/opensky/silver"
-CRON_SCHEDULE = "0 0 11 * * ?"  # 11:00:00 daily
+CRON_SCHEDULE_BY_CATALOG = {
+    "dev_catalog": "0 0 11 * * ?",  # 11:00:00 daily
+    "qa_catalog": "0 15 11 * * ?",  # 11:15:00 daily
+    "prod_catalog": "0 30 11 * * ?",  # 11:30:00 daily
+}
 TIMEZONE_ID = "Asia/Bangkok"
 
 
 def run(http_path, catalog):
     return deploy_layer(
-        http_path, catalog, TASK_ORDER, SQL_DIR, JOB_NAME_PREFIX, WORKSPACE_ROOT, CRON_SCHEDULE, TIMEZONE_ID,
+        http_path, catalog, TASK_ORDER, SQL_DIR, JOB_NAME_PREFIX, WORKSPACE_ROOT,
+        CRON_SCHEDULE_BY_CATALOG[catalog], TIMEZONE_ID,
         file_prefix="silver_",
     )
 
