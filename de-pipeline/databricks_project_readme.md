@@ -1,158 +1,173 @@
 # de-pipeline
 
-## 1. Databricks landing setup (one-time)
+OpenSky flight-movement pipeline: local ingestion → Databricks bronze/silver/gold (medallion), deployed via GitHub Actions across dev/qa/prod.
 
-Creates `opensky_raw.bronze` (catalog + schema + tables + volume).
+---
 
-1. **Service principal:** Workspace → Settings → Identity and access → Service principals → Add. Note its **Application ID** (`DATABRICKS_CLIENT_ID`), generate an OAuth secret.
-2. **Grants** (needs a metastore admin):
-   ```sql
-   GRANT CREATE CATALOG ON METASTORE TO `<application-id>`;
+## 1. Setup
+
+### 1.1 Databricks setup
+
+1. **Service principal**: Workspace → Settings → Identity and access → Service principals → Add. Note the **Application ID** (`DATABRICKS_CLIENT_ID`), generate an OAuth secret (`DATABRICKS_CLIENT_SECRET`). PAT (`DATABRICKS_TOKEN`) works as a fallback everywhere OAuth M2M is used.
+2. **Grants** (needs a metastore admin): `GRANT CREATE CATALOG ON METASTORE TO <application-id>;` + `CAN_USE` on the SQL Warehouse.
+3. **Connection details**: any SQL Warehouse → Connection details → `Server hostname` (`DATABRICKS_HOST`) + `HTTP path` (`DATABRICKS_HTTP_PATH`).
+4. **Bronze/landing infra (one-time, env-independent)** — run locally or via CI (§4):
    ```
-   Plus `CAN_USE` on the SQL Warehouse (Warehouse → Permissions tab, UI picker is fine there).
-   > `PRINCIPAL_DOES_NOT_EXIST`? Use the Application ID (UUID), not the display name.
-3. **Connection details:** any SQL Warehouse → Connection details → `Server hostname` (`DATABRICKS_HOST`) + `HTTP path` (`DATABRICKS_HTTP_PATH`).
-4. **Test locally:**
-   ```
-   cd de-pipeline/databricks
-   python -m venv .venv && .venv\Scripts\activate
-   pip install -r requirements.txt
-   copy .env.example .env
-   ```
-   Fill in `.env` (`DATABRICKS_HOST/HTTP_PATH/CLIENT_ID/CLIENT_SECRET`, or `DATABRICKS_TOKEN` for PAT fallback; optionally `ADMIN_PRINCIPAL` = your login email, so you can see the catalog too — see below). Then:
-   ```
-   cd setup
+   cd de-pipeline/databricks/setup
    python databricks_setup.py --sql-file setup.sql
    ```
-   (`.env` still resolves correctly one directory up — `--sql-file` just needs to be run from inside `setup/`, since it's a plain relative path.)
-   Verify in Catalog Explorer: `opensky_raw.bronze` with `flights_raw`/`callsigns`/`airlines`/`airports`/`aircrafts`/`airport_data`/`airports_master` + a `landing` volume. Safe to re-run (idempotent). `--sql-file` is required — pass `destroy.sql` instead to drop 6 of the 7 tables (catalog/schema/volume untouched); `airports_master` is deliberately left out of `destroy.sql` since it's a manually-loaded reference dataset, not something re-fetched daily. Or trigger `databricks-infra-destroy.yml` (`workflow_dispatch` only, requires typing `destroy` to confirm).
-
-   > **Why `ADMIN_PRINCIPAL`:** the service principal *owns* what it creates, so your own admin login can't see `opensky_raw` unless it's the true metastore admin or explicitly granted. Set `ADMIN_PRINCIPAL` and `setup.sql`'s last statement grants you `ALL PRIVILEGES` + `MANAGE` automatically every run (`MANAGE` has to be listed separately — Unity Catalog's `ALL PRIVILEGES` deliberately excludes it).
-
-5. **Test via CI/CD:** add the same secrets to GitHub (repo → Settings → Secrets → Actions), then run `databricks-infra-deploy.yml` (auto on push to `main` touching `de-pipeline/databricks/**`, or manual dispatch). If it fails on `CREATE CATALOG`, the metastore grant from step 2 didn't take.
-
-6. **Auto-load Volume files into their tables (one-time):**
+   Creates `opensky_raw.bronze` (7 tables + `landing` Volume).
+5. **Landing → bronze auto-load (one-time)**:
    ```
    cd de-pipeline/databricks/landing
    python landing.py
    ```
-   Creates 7 Databricks Jobs (one per table), each with a file-arrival trigger scoped to that table's own Volume folder — landing a file in `callsigns/` only loads `callsigns`, never the others. Re-run this any time a file under `landing/sql/` changes, or a table is added to `TABLES`; it updates the existing Jobs in place rather than duplicating them. In CI/CD this is `databricks-landing-deploy.yml` (push to `main` touching `de-pipeline/databricks/landing/**`, or manual dispatch) — see Section 5.
+   Creates 7 file-arrival-triggered Jobs (one per table).
+6. **Per-environment catalogs (dev/qa/prod)** — run once per environment, or via CI (§4):
+   ```
+   cd de-pipeline/databricks/env_setup
+   python env_setup.py --sql-file setup.sql --catalog dev_catalog
+   python env_setup.py --sql-file tables_master.sql --catalog dev_catalog
+   python env_setup.py --sql-file tables_silver.sql --catalog dev_catalog
+   python env_setup.py --sql-file tables_gold.sql --catalog dev_catalog
+   ```
+   Repeat with `qa_catalog` / `prod_catalog`. Creates `{{CATALOG}}.silver_flights`, `.gold_flights`, `.master`.
+7. **Silver/gold/master transforms + ingestion job** — deployed by CI only (§4); no manual step needed once secrets are set.
+
+### 1.2 GitHub setup
+
+1. **Branches**: create `main`, `main_qa`, `main_prod`.
+2. **Repo secrets** (Settings → Secrets and variables → Actions → Repository secrets):
+   - `ADMIN_PRINCIPAL`
+   - `DATABRICKS_CLIENT_ID`
+   - `DATABRICKS_CLIENT_SECRET`
+   - `DATABRICKS_HOST`
+   - `DATABRICKS_HTTP_PATH`
+   - `OPENSKY_CLIENT_ID`
+   - `OPENSKY_CLIENT_SECRET`
+3. **Branch model**: `pr-target-check.yml` enforces PRs flow `main → main_qa → main_prod` only.
+   - `main` → `dev_catalog`, 
+   - `main_qa` → `qa_catalog`, 
+   - `main_prod` → `prod_catalog`. 
+4. Push to the right branch (or use `workflow_dispatch`) to trigger the matching deploy workflow — see §4.
+
+### 1.3 Where things get copied
+
+| What | Local path | Destination |
+|---|---|---|
+| Ingestion secrets | `de-pipeline/ingestion/.env` | Copy manually to Databricks Workspace `/Shared/opensky/ingestion/.env` (only needed if running ingestion notebook/job on Databricks) |
+| Databricks/env_setup secrets | `de-pipeline/databricks/.env`, `de-pipeline/databricks/env_setup` uses same | Not uploaded anywhere — local/CI only |
+| Ingestion code (for on-Databricks runs) | `de-pipeline/ingestion/{common,pipeline,loaders,databricks}/*` | `/Shared/opensky/ingestion/...` (via `deploy_opensky_ingestion.py`) |
+| Silver/gold/master SQL | `de-pipeline/databricks/transformation/{silver,gold,master}/*.sql` | `/Shared/opensky/silver/<catalog>/...`, `/Shared/opensky/gold/<catalog>/...`, `/Shared/master/<catalog>/...` |
+| Landing `COPY INTO` SQL | `de-pipeline/databricks/landing/sql/*.sql` | `/Shared/opensky/copy_into_<table>.sql` |
 
 ---
 
-## 2. Ingestion setup (local)
+## 2. Ingestion (`de-pipeline/ingestion/`)
 
-1. Register an OpenSky OAuth2 client at [opensky-network.org/my-opensky](https://opensky-network.org/my-opensky) (4,000 credits/day tier).
-2. ```
-   cd de-pipeline/ingestion
-   python -m venv .venv && .venv\Scripts\activate
-   pip install -r requirements.txt
-   copy .env.example .env
-   ```
-3. Fill in `.env`: `OPENSKY_CLIENT_ID`/`SECRET` + the `DATABRICKS_*` values from Step 1 (needed for the upload step).
+| Folder | Contents |
+|---|---|
+| `common/` | `config.py` (env/config), `fetch_data.py` (OpenSky OAuth + fetch), `transforms.py` (tagging/dedup helpers) |
+| `pipeline/` | `ingest_opensky.py`, `export_airports.py`, `export_callsigns.py`, `ingest_adsbdb.py`, `ingest_airports.py` — the daily steps |
+| `loaders/` | `load_to_databricks.py`, `load_to_snowflake.py` — upload CSVs to each platform's landing stage |
+| `manual/` | `fetch_aircraft_history.py`, `ingest_json_csv.py` — ad hoc utilities, not scheduled |
+| `databricks/` | `databricks_ingest.py` (orchestrator), `run_ingestion_notebook.py`, `deploy_opensky_ingestion.py`, `schedule_opensky_ingestion.py` — runs the pipeline *on* Databricks instead of locally |
 
-## 3. Running ingestion locally
+**How data is ingested (current)**: OpenSky API → `flights_raw.csv` → extract distinct airports/callsigns (new-only delta) → enrich via adsbdb.com + airport-data.com → land the resulting CSVs in the Databricks Volume → file-arrival trigger runs `COPY INTO` into bronze tables. For now this runs **on Databricks**: `databricks/run_ingestion_notebook.py` is triggered to call the ingestion scripts step-by-step (via `databricks_ingest.py`'s `run_all()`), then lands the CSVs straight into the Volume — no separate upload step needed, since the notebook already runs inside Databricks.
 
-Always local CSV first — nothing talks to Databricks except the upload step.
+**Sequence** (as called by the notebook / `databricks_ingest.py`):
+```
+1. ingest_opensky.py       -> flights_raw.csv
+2. export_airports.py     -> airports.csv (new-only)
+3. export_callsigns.py    -> callsigns.csv (new-only)
+4. ingest_adsbdb.py        -> adsbdb_callsigns/airlines/airports.csv
+5. ingest_airports.py      -> airport_data.csv
+   -> land_to_volume()     -> Databricks landing Volume -> file-arrival trigger -> COPY INTO bronze tables
+```
+`ingest_adsbdb.py --aircraft` (aircraft enrichment) and the one-off `airports_master` load are manual, not part of this sequence.
 
-**Fetch from OpenSky:**
+**Local alternative**: `run_daily.bat` can run the same pipeline locally, plus upload steps for both platforms:
 ```
-python ingest_opensky.py --airports WSSS --lookback-days 1   # quick test
-python ingest_opensky.py                                     # full run, default lookback 1 day (yesterday)
+1-5. pipeline\ingest_opensky.py / export_airports.py / export_callsigns.py / ingest_adsbdb.py / ingest_airports.py
+6.   loaders\load_to_databricks.py ...   -> Databricks landing Volume
+7.   loaders\load_to_snowflake.py ...    -> Snowflake landing stage
 ```
-Writes `flights_raw.csv` only (full export, partial API-limit failures still export what was fetched). Extracting new-only callsigns/airports is a separate step, below - split out so a problem there doesn't require re-fetching from OpenSky.
+Available to run via Windows Task Scheduler, but not how ingestion currently runs.
 
-**Extract new-only callsigns/airports:**
-```
-python export_callsigns.py
-python export_airports.py
-```
-Each rolls the previous run's `callsigns.csv`/`airports.csv` (last run's "new" delta) into `callsigns_old.csv`/`airports_old.csv`, then overwrites `callsigns.csv`/`airports.csv` with only the values from this run's `flights_raw.csv` not already in that accumulated history. Re-run either on its own against the existing `flights_raw.csv` if needed.
+---
 
-**Enrich via adsbdb.com:**
-```
-python ingest_adsbdb.py              # callsigns + airlines + airports (default)
-python ingest_adsbdb.py --aircraft   # aircraft only, run manually as needed
-python ingest_adsbdb.py --limit 10   # cap items, for a quick test
-```
-See Section 4 for output files.
+## 3. Databricks (`de-pipeline/databricks/`)
 
-**Enrich via airport-data.com** (real lat/lon, but only for US/`K`-prefixed ICAO codes - see Section 4):
-```
-python ingest_airports.py            # writes airport_data.csv
-python ingest_airports.py --json     # also writes airport_data.json
-```
-Reads `airports.csv`, one GET per distinct ICAO code. A not-found/invalid code still gets a row, with every airport-data field explicitly `null` - never an error or a skipped row. Partial failures (rate limit, network) still export whatever was collected.
+### Architecture (medallion)
 
-**Upload to the Databricks landing Volume:**
 ```
-python load_to_databricks.py flights_raw airlines airports callsigns airport_data
-```
-Uploads named CSV(s) to `/Volumes/opensky_raw/bronze/landing/<folder>/`. Missing files are skipped with a warning. Loading a Volume file into its table (`COPY INTO`) happens automatically from here — a file-arrival-triggered Databricks Job picks it up within about a minute (see Section 1, step 6). No further action needed as long as that one-time Job setup has been run.
+opensky_raw.bronze          (setup/, one-time, env-independent)
+       │  file-arrival trigger -> COPY INTO   (landing/)
+       v
+{{CATALOG}}.silver_flights  (transformation/silver/, per dev/qa/prod)
+       │  MERGE/INSERT
+       v
+{{CATALOG}}.gold_flights    (transformation/gold/, per dev/qa/prod)
 
-**One-off: loading the `airports_master` reference file.** `data/master_airports.csv` (the OurAirports.com global airport reference, ~85,800 rows, real lat/lon worldwide) isn't part of the daily run - it's loaded once, or whenever refreshed by hand:
+{{CATALOG}}.master          (transformation/master/, date/time dims, project-agnostic)
 ```
-python load_to_databricks.py airports_master
-```
-Same automatic file-arrival → `COPY INTO` path as every other dataset (see Section 1, step 6) - it just isn't wired into `run_daily.bat`.
 
-## 4. Manual-test utilities
+### Modules
 
-**One aircraft's history:**
-```
-python fetch_aircraft_history.py --icao24 7823bc --lookback-days 3
-```
-Writes `data/aircraft_flights_<icao24>_<timestamp>.json`.
+| Folder | Purpose |
+|---|---|
+| `setup/` | One-time bronze infra: `opensky_raw` catalog/schema/Volume + 7 raw tables |
+| `landing/` | Per-table file-arrival-triggered Jobs, bronze `COPY INTO` |
+| `env_setup/` | Per-environment (`dev`/`qa`/`prod`) catalog + silver/gold/master schema DDL, plus `destroy_*.sql` |
+| `transformation/` | Deploy scripts + SQL for silver, gold, master transforms |
 
-**adsbdb enrichment** (`ingest_adsbdb.py`, community data — `found=False` is normal, not a bug):
+### Data model
 
-| File | Written by | Contents |
+| Layer | Tables |
+|---|---|
+| Bronze | `flights_raw`, `callsigns`, `airlines`, `airports`, `aircrafts`, `airport_data`, `airports_master` |
+| Silver | `flights`, `airlines`, `aircrafts`, `callsigns`, `airports` |
+| Gold | `fct_flight_movement`, `dim_airline`, `dim_aircraft`, `dim_airport`, `dim_callsign` |
+| Master | `date`, `time` |
+
+### Transformation logic
+
+- **Silver**: content-hash keyed (`md5` of business columns) — a changed value inserts a new row instead of overwriting, so silver keeps full history. `flights` is the one exception (updates departure/arrival in place).
+- **Gold dimensions**: SCD-2 (`effective_start`/`effective_end`/`is_current`, `9999-12-12` sentinel for open rows). Each run only processes silver's latest batch (or full history if the dim is empty) — silver's content-hash dedup guarantees that's always genuinely new/changed data. Change detection recomputes each dimension's own content hash at runtime and compares it to silver's stored key; `dim_callsign.airline_sk` resolves via a point-in-time join to `dim_airline` (not just whichever version is current now).
+- **`fct_flight_movement`**: a departure/arrival change soft-deletes the old row (`is_deleted=true`) and inserts a new one (`record_type='RESCHEDULE'`); FKs resolve point-in-time against each dimension's effective window as of the flight's departure.
+
+### Deploy scripts & schedule (Asia/Bangkok)
+
+| Script | Job | Task order | dev | qa | prod |
+|---|---|---|---|---|---|
+| `databricks_silver.py` | `opensky-silver-transform-<catalog>` | flights → callsigns → airlines → airports → aircrafts | 11:00 | 11:15 | 11:30 |
+| `databricks_gold.py` | `opensky-gold-transform-<catalog>` | dim_airline → dim_aircraft → dim_airport → dim_callsign → fct_flight_movement | 12:00 | 12:15 | 12:30 |
+| `databricks_master.py` | `master-transform-<catalog>` | date → time | Jan 1, 00:00 (same for all catalogs) | | |
+
+---
+
+## 4. Workflows (`.github/workflows/`)
+
+**Deploy** (auto on push to path + branch, or manual `workflow_dispatch`):
+
+| Workflow | Triggers on | Use when |
 |---|---|---|
-| `adsbdb_callsigns.csv` | default | route, airline, origin/destination airport (+ lat/lon) |
-| `adsbdb_airlines.csv` | default | distinct airlines, derived from the callsigns above |
-| `adsbdb_airports.csv` | default | distinct airports, derived from the callsigns above |
-| `adsbdb_aircraft.csv` | `--aircraft` | type, manufacturer, registration, owner |
+| `databricks-infra-deploy.yml` | `de-pipeline/databricks/setup/**` (main) | Changing bronze/landing table DDL |
+| `databricks-landing-deploy.yml` | `de-pipeline/databricks/landing/**` (main) | Changing a `COPY INTO` SQL file or adding a bronze table |
+| `databricks-env-deploy.yml` | `de-pipeline/databricks/env_setup/**` (main/main_qa/main_prod) | Changing catalog/schema/table DDL for silver/gold/master |
+| `databricks-silver-deploy.yml` | `transformation/silver/**` or `databricks_silver.py` | Changing silver transform logic or schedule |
+| `databricks-gold-deploy.yml` | `transformation/gold/**` or `databricks_gold.py` | Changing gold transform logic or schedule |
+| `databricks-master-deploy.yml` | `transformation/master/**` or `databricks_master.py` | Changing date/time dimension logic |
+| `databricks-ingestion-deploy.yml` | `de-pipeline/ingestion/**` | Changing ingestion code, syncs it to Databricks and updates the daily 10:00 job |
+| `snowflake-infra-deploy.yml` | `de-pipeline/snowflake/setup/**` (main) | Changing Snowflake bronze setup |
 
-No separate airline/airport API calls — both are derived from the callsign route response. A `400` (invalid identifier) is logged and skipped like a `404`.
+**Destroy** (`workflow_dispatch` only, type `destroy` to confirm):
 
-**airport-data.com enrichment** (`ingest_airports.py`, free/keyless, community data):
+`databricks-infra-destroy.yml`, `databricks-silver-destroy.yml`, `databricks-gold-destroy.yml`, `databricks-master-destroy.yml`, `snowflake-infra-destroy.yml` — each drops exactly the tables its matching deploy workflow creates (bronze keeps `airports_master`; catalog/schema/Volume untouched).
 
-| File | Written by | Contents |
+**Other:**
+
+| Workflow | Trigger | Purpose |
 |---|---|---|
-| `airport_data.csv` | always | every field the API returns (icao, iata, name, location, country, country_code, longitude, latitude, link), plus `queried_icao`/`fetched_at`/`status`/`error` |
-| `airport_data.json` | `--json` only | same records, JSON instead of/as well as CSV |
-
-Lat/lon are only real for US (`K`-prefixed ICAO) airports — every other country currently returns `0`/`0` from this API (a data-quality limit of the source, not a bug). `data/master_airports.csv` (OurAirports.com, loaded once via `airports_master` - see Section 3) has real coordinates worldwide and is the better source if global lat/lon matters.
-
-## 5. GitHub Actions (CI/CD)
-
-| Workflow | Trigger | Status |
-|---|---|---|
-| `databricks-infra-deploy.yml` | push to `main` (`de-pipeline/databricks/setup/**`), or manual | **Working** — Section 1 |
-| `databricks-infra-destroy.yml` | manual only, requires typing `destroy` to confirm | **Working** — drops 6 of the 7 Bronze tables (see Section 1, step 4) |
-| `databricks-landing-deploy.yml` | push to `main` (`de-pipeline/databricks/landing/**`), or manual | **Working** — creates/updates the 7 file-arrival-triggered Jobs (see Section 1, step 6) |
-| `de-ingest.yml` | manual / `repository_dispatch` | **Stale, doesn't work** — OpenSky blocks GitHub Actions IPs; also out of date vs. the current scripts. Kept for reference only. |
-
-**Secrets:** `DATABRICKS_HOST`/`HTTP_PATH`/`CLIENT_ID`/`CLIENT_SECRET` (or `DATABRICKS_TOKEN`), `ADMIN_PRINCIPAL` (optional) — all for `databricks-infra-deploy.yml`/`databricks-infra-destroy.yml`. `OPENSKY_*` creds live in local `.env` only.
-
-## 6. Running ingestion daily (local)
-
-GitHub Actions can't reach OpenSky (IP-blocked) and Databricks compute can't either (network policy) — so daily ingestion runs on a machine you control.
-
-**`run_daily.bat`** runs, in sequence, logging to `ingest_daily.log`:
-1. `ingest_opensky.py`
-2. `export_airports.py`
-3. `export_callsigns.py`
-4. `ingest_adsbdb.py` (default mode)
-5. `load_to_databricks.py flights_raw airlines airports callsigns airport_data`
-
-(`ingest_adsbdb.py --aircraft` / `aircrafts`, `ingest_airports.py` / `airport_data`'s own fetch step, and `airports_master` are all manual, not part of this daily run.)
-
-**Task Scheduler:** Create Basic Task → Trigger: Daily → Action: Start a program → path to `run_daily.bat` (leave "Start in" blank). Run once to test, check `ingest_daily.log`.
-
-> With the default `lookback_days=1`, a missed day is **not** auto-backfilled — re-run manually with a wider `--lookback-days` to catch up.
-
-## Notes
-
-- Curated airport list (85 SEA international airports) lives in `ingestion/config.py`.
-- `--airports` takes a comma-separated ICAO subset for a quick test; `ingest_adsbdb.py --limit N` is the equivalent for enrichment.
+| `pr-target-check.yml` | any pull request | Enforces `main → main_qa → main_prod` PR flow, blocks skipping a stage |
+| `de-ingest.yml` | manual/`repository_dispatch` | **Not working** — OpenSky blocks GitHub Actions runner IPs at the TCP level. Kept for reference only; run ingestion locally instead (§2). |
