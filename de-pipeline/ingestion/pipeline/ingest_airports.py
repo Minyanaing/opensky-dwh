@@ -17,10 +17,13 @@ import argparse
 import csv
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 from transforms import read_column, utc_now_iso

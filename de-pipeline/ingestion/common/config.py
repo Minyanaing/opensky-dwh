@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # OpenSky OAuth2 client-credentials - register at opensky-network.org/my-opensky (API Client)
 OPENSKY_CLIENT_ID = os.environ.get("OPENSKY_CLIENT_ID", "")
@@ -19,7 +19,7 @@ LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "1"))
 # OpenSky caps queries by UTC day-partitions touched, not call duration.
 MAX_DAY_PARTITIONS_PER_CHUNK = 2
 
-OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent / "data")))
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).resolve().parent.parent / "data")))
 
 # Column order for flights_raw.csv - matches databricks/setup.sql's flights_raw table, minus
 # _loaded_at (added when the CSV is loaded into Databricks, not at ingest time).

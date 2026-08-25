@@ -60,9 +60,13 @@ def get_connection():
 
 def _statements(sql_text):
     """Drop comment/blank lines, then split on ';' - comments must go first, or a semicolon
-    inside one creates a spurious split."""
+    inside one creates a spurious split. A BEGIN...END compound statement (SQL scripting) must be
+    submitted whole - splitting it on its internal ';'s would break it - so a file that starts
+    with BEGIN is returned as a single statement instead."""
     code_lines = [line for line in sql_text.splitlines() if line.strip() and not line.strip().startswith("--")]
-    code_only = "\n".join(code_lines)
+    code_only = "\n".join(code_lines).strip()
+    if code_only.upper().startswith("BEGIN"):
+        return [code_only]
     return [statement.strip() for statement in code_only.split(";") if statement.strip()]
 
 

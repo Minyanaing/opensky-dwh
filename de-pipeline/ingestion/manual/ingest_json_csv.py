@@ -12,7 +12,10 @@ its next run rebuilds the delta from scratch.
 import argparse
 import csv
 import logging
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 
 import config
 from transforms import distinct_airports, distinct_callsigns
@@ -87,3 +90,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

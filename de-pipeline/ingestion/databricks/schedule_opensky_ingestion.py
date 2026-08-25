@@ -1,0 +1,112 @@
+"""Creates (or updates) a Databricks Job that runs run_ingestion_notebook.py daily at 10:00
+Asia/Bangkok time - the notebook itself calls run_all(land_volume=True) and logs to a file in
+the landing Volume (see run_ingestion_notebook.py). Run deploy_opensky_ingestion.py first - this
+only wires up the schedule, it doesn't upload code.
+
+Serverless notebook tasks still declare a Job-level environment (pip dependencies), referenced
+by the task's environment_key - kept here even though the notebook also does its own %pip
+install, since it's unconfirmed whether that alone satisfies a serverless notebook task.
+"""
+
+import logging
+import os
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service import compute, jobs
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+JOB_NAME = "opensky-ingestion-daily"
+WORKSPACE_DIR = "/Shared/opensky/ingestion"
+NOTEBOOK_PATH = f"{WORKSPACE_DIR}/databricks/run_ingestion_notebook"
+CRON_SCHEDULE = "0 0 10 * * ?"
+TIMEZONE_ID = "Asia/Bangkok"
+ENVIRONMENT_KEY = "opensky_ingestion_env"
+ENVIRONMENT_DEPENDENCIES = ["requests", "python-dotenv", "databricks-sdk"]
+
+
+def _require_env(name):
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is not set")
+    return value
+
+
+def get_workspace_client():
+    host = _require_env("DATABRICKS_HOST")
+
+    token = os.environ.get("DATABRICKS_TOKEN")
+    if token:
+        logger.info("Authenticating with a personal access token (fallback)")
+        return WorkspaceClient(host=f"https://{host}", token=token)
+
+    client_id = os.environ.get("DATABRICKS_CLIENT_ID")
+    client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
+    if client_id and client_secret:
+        logger.info("Authenticating as a service principal (OAuth M2M)")
+        return WorkspaceClient(host=f"https://{host}", client_id=client_id, client_secret=client_secret)
+
+    raise RuntimeError(
+        "Set DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET (service principal, preferred) "
+        "or DATABRICKS_TOKEN (personal access token fallback)."
+    )
+
+
+def _existing_job_id(client, job_name):
+    for job in client.jobs.list(name=job_name):
+        return job.job_id
+    return None
+
+
+def build_task():
+    return jobs.Task(
+        task_key="run_ingestion",
+        environment_key=ENVIRONMENT_KEY,
+        notebook_task=jobs.NotebookTask(
+            notebook_path=NOTEBOOK_PATH,
+            source=jobs.Source.WORKSPACE,
+        ),
+    )
+
+
+def build_environment():
+    return jobs.JobEnvironment(
+        environment_key=ENVIRONMENT_KEY,
+        spec=compute.Environment(environment_version="2", dependencies=ENVIRONMENT_DEPENDENCIES),
+    )
+
+
+def create_or_update_job(client):
+    task = build_task()
+    environment = build_environment()
+    schedule = jobs.CronSchedule(quartz_cron_expression=CRON_SCHEDULE, timezone_id=TIMEZONE_ID)
+
+    existing_id = _existing_job_id(client, JOB_NAME)
+    if existing_id:
+        client.jobs.reset(
+            job_id=existing_id,
+            new_settings=jobs.JobSettings(name=JOB_NAME, tasks=[task], environments=[environment], schedule=schedule),
+        )
+        logger.info("Updated existing job %s (id=%s)", JOB_NAME, existing_id)
+        return existing_id
+
+    response = client.jobs.create(name=JOB_NAME, tasks=[task], environments=[environment], schedule=schedule)
+    logger.info("Created job %s (id=%s)", JOB_NAME, response.job_id)
+    return response.job_id
+
+
+def run():
+    client = get_workspace_client()
+    return create_or_update_job(client)
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    run()
+
+
+if __name__ == "__main__":
+    main()

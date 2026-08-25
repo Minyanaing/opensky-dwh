@@ -1,0 +1,43 @@
+name: Databricks master transform deploy
+
+on:
+  push:
+    branches: [main, main_qa, main_prod]
+    paths:
+      - "de-pipeline/databricks/transformation/master/**"
+      - "de-pipeline/databricks/transformation/databricks_master.py"
+  workflow_dispatch: {}
+
+jobs:
+  master-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: de-pipeline/databricks
+        run: pip install -r requirements.txt
+
+      - name: Resolve environment from branch
+        id: resolve
+        run: |
+          case "${{ github.ref_name }}" in
+            main) echo "env=dev" >> "$GITHUB_OUTPUT" ;;
+            main_qa) echo "env=qa" >> "$GITHUB_OUTPUT" ;;
+            main_prod) echo "env=prod" >> "$GITHUB_OUTPUT" ;;
+            *) echo "No environment mapping for branch '${{ github.ref_name }}'"; exit 1 ;;
+          esac
+
+      - name: Deploy master transform job
+        working-directory: de-pipeline/databricks/transformation
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: python databricks_master.py --catalog ${{ steps.resolve.outputs.env }}_catalog

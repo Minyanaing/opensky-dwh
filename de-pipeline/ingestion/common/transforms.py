@@ -47,11 +47,12 @@ def distinct_callsigns(records):
 
 
 def distinct_airports(records):
-    """Distinct ICAO codes from both ends of every flight, not just the queried airport."""
+    """Distinct, whitespace-stripped ICAO codes from both ends of every flight, not just the
+    queried airport."""
     airports = set()
     for record in records:
         for field in ("estDepartureAirport", "estArrivalAirport"):
-            value = record.get(field)
+            value = (record.get(field) or "").strip()
             if value:
                 airports.add(value)
     return sorted(airports)
@@ -65,7 +66,7 @@ def read_column(path, column):
     if not path.is_file():
         return []
     with open(path, newline="", encoding="utf-8") as f:
-        rows = [row[0] for row in csv.reader(f) if row]
+        rows = [row[0].strip() for row in csv.reader(f) if row]
     if rows and rows[0] == column:
         rows = rows[1:]
     return rows

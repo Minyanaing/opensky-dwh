@@ -58,4 +58,4 @@ jobs:
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: python ingest_opensky.py --lookback-days "${{ github.event.inputs.lookback_days || '3' }}"
+        run: python pipeline/ingest_opensky.py --lookback-days "${{ github.event.inputs.lookback_days || '3' }}"
