@@ -1,3 +1,5 @@
+TRUNCATE TABLE opensky_raw.bronze.airports;
+
 COPY INTO opensky_raw.bronze.airports
 FROM (
   SELECT

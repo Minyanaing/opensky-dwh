@@ -1,3 +1,5 @@
+TRUNCATE TABLE opensky_raw.bronze.callsigns;
+
 COPY INTO opensky_raw.bronze.callsigns
 FROM (
   SELECT
